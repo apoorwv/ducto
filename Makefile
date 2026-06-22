@@ -20,10 +20,10 @@ test: lint typecheck
 	uv run python -m pytest tests/ -q
 
 publish-test: test build
-	uv publish --publish-url https://test.pypi.org/legacy/
+	. ./.env && uv publish --publish-url https://test.pypi.org/legacy/
 
 publish: test build
-	uv publish
+	. ./.env && uv publish
 
 release: publish
 	@echo "Released ducto v$(VERSION)"
