@@ -2,17 +2,19 @@
 
 Declarative credit calculation engine for AI SaaS platforms.
 
-Define pricing in YAML — a safe AST-walking expression engine calculates
-credit costs from usage metrics. Supports per-model formulas, tool costs,
-search/RAG pricing, cache discounts, and fixed-cost batch jobs.
+Define pricing expressions (in YAML or a database) — a safe AST-walking
+expression engine calculates credit costs from usage metrics. Supports
+per-model formulas, tool costs, search/RAG pricing, cache discounts,
+fixed-cost batch jobs, and a full reserve-then-deduct lifecycle.
 
 ## Features
 
 - **Safe expression engine** — Uses Python's `ast` module with a strict
   allowlist (no `eval()` of raw strings, no `exec()`, no attribute access,
   no imports). Validated at config load time.
-- **YAML configuration** — Human-readable pricing definitions validated by
-  Pydantic.
+- **Flexible configuration** — Pricing expressions can be defined in YAML
+  files (local dev/testing) or stored in a database table
+  (`credit_pricing_config`) for live updates without redeploys.
 - **Multi-dimensional** — Per-model formulas (with `_default` fallback),
   per-tool overrides, search/RAG, cache read discounts, fixed-cost jobs.
 - **Stateless core** — Pure calculation layer has zero database dependency.
@@ -40,6 +42,8 @@ Requires Python ≥ 3.11.
 
 ## Quick Start
 
+### Calculation only (no database)
+
 ```python
 from ducto import PricingEngine, UsageMetrics, ToolCall
 
@@ -51,59 +55,79 @@ result = engine.calculate(UsageMetrics(
     output_tokens=1204,
     tool_calls=[ToolCall(name="web_search")],
     web_search_calls=1,
-    search_queries=2,
-    search_results=10,
 ))
 
 print(f"Total credits: {result.total}")
-print(f"  Model: {result.model_credits}")
-print(f"  Tools: {result.tool_credits}")
-print(f"  Search: {result.search_credits}")
+```
+
+### Full lifecycle with database
+
+```python
+from ducto import CreditManager
+from ducto.interface.supabase import SupabaseStore
+
+store = SupabaseStore(client=supabase_client)
+manager = CreditManager(store=store)
+
+# One-time setup: runs bundled SQL migrations
+manager.setup()
+
+# Load pricing from database (stored in credit_pricing_config table)
+manager.load_pricing_from_store()
+
+# Deduct credits for a usage event
+result = manager.deduct(
+    user_id="user_abc",
+    metrics=UsageMetrics(model="claude-opus-4", input_tokens=500, output_tokens=200),
+    idempotency_key="chat_42_turn_7",
+)
 ```
 
 ## Pricing Configuration
 
-Define pricing in YAML (see [`tests/fixtures/pricing_full.yaml`](tests/fixtures/pricing_full.yaml)
-for a complete example):
+Pricing can be configured in two ways:
+
+### Option 1: YAML file (local dev / testing)
 
 ```yaml
 version: 1
-
 models:
   claude-opus-4: "input_tokens * 0.005 + output_tokens * 0.015"
   _default: "input_tokens * 0.001 + output_tokens * 0.003"
-
 tools:
   _default: "tool_calls * 0"
   web_search: "web_search_calls * 0.5"
-  code_exec: "code_exec_calls * 0.3"
-
 search:
   costs: "search_queries * 0.5 + search_results * 0.05"
-
 cache:
   discount: "-cache_read_tokens * 0.0045"
-
 fixed:
   roadmap_gen: 20
-  topic_gen: 10
-
 min_balance: 5
 ```
 
+### Option 2: Database-backed (production)
+
+Pricing is stored in the `credit_pricing_config` table via the
+`set_active_pricing_config` RPC. The `CreditManager.load_pricing_from_store()`
+method fetches the active config at runtime. Seed scripts can populate
+defaults — see [`scripts/seed_pricing.py`](scripts/seed_pricing.py).
+
+This approach enables live pricing updates without redeploys.
+
 ### Available expression variables
 
-| Variable             | Source field in `UsageMetrics` |
-| -------------------- | ------------------------------ |
-| `input_tokens`       | `metrics.input_tokens`         |
-| `output_tokens`      | `metrics.output_tokens`        |
-| `cache_read_tokens`  | `metrics.cache_read_tokens`    |
-| `cache_write_tokens` | `metrics.cache_write_tokens`   |
-| `tool_calls`         | `len(metrics.tool_calls)`      |
-| `search_queries`     | `metrics.search_queries`       |
-| `search_results`     | `metrics.search_results`       |
-| `web_search_calls`   | `metrics.web_search_calls`     |
-| `code_exec_calls`    | `metrics.code_exec_calls`      |
+| Variable | Source field in `UsageMetrics` |
+|----------|------------------------------|
+| `input_tokens` | `metrics.input_tokens` |
+| `output_tokens` | `metrics.output_tokens` |
+| `cache_read_tokens` | `metrics.cache_read_tokens` |
+| `cache_write_tokens` | `metrics.cache_write_tokens` |
+| `tool_calls` | `len(metrics.tool_calls)` |
+| `search_queries` | `metrics.search_queries` |
+| `search_results` | `metrics.search_results` |
+| `web_search_calls` | `metrics.web_search_calls` |
+| `code_exec_calls` | `metrics.code_exec_calls` |
 
 ### Supported functions in expressions
 
@@ -166,30 +190,31 @@ Implement `ducto.interface.base.CreditStore` (an ABC with
 
 ```python
 manager = CreditManager(store=store)
+manager.setup()                               # run SQL migrations
+manager.load_pricing_from_store()             # load pricing from DB
+result = manager.deduct(user_id="user_abc",
+    metrics=UsageMetrics(model="gpt-4", input_tokens=100, output_tokens=50),
+    idempotency_key="tx_42")
+```
 
-# One-time setup: runs bundled SQL migrations
-manager.setup()
+Pricing can also be loaded from a YAML dict:
 
-# Load pricing from YAML
-manager.load_pricing_from_yaml("pricing.yaml")
-
-# Deduct credits for a usage event
-result = manager.deduct(
-    user_id="user_abc",
-    metrics=UsageMetrics(model="claude-opus-4", input_tokens=500, output_tokens=200),
-    idempotency_key="chat_42_turn_7",
-)
+```python
+manager.load_pricing_from_dict({
+    "version": 1,
+    "models": {"_default": "input_tokens * 0.001 + output_tokens * 0.003"},
+})
 ```
 
 ## SQL Migrations
 
 Three bundled SQL files create the required schema:
 
-| File                     | Creates                                                                                                              |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| `001_credit_tables.sql`  | `user_credits`, `credit_transactions`, `credit_reservations` tables, RLS policies, signup bonus trigger              |
-| `002_credit_rpcs.sql`    | `credits_add`, `reserve_credits`, `deduct_credits`, `get_credits_balance` RPCs (SECURITY DEFINER, service_role only) |
-| `003_pricing_config.sql` | `credit_pricing_config` table, `get_active_pricing_config`, `set_active_pricing_config` RPCs                         |
+| File | Creates |
+|------|---------|
+| `001_credit_tables.sql` | `user_credits`, `credit_transactions`, `credit_reservations` tables, RLS policies, signup bonus trigger |
+| `002_credit_rpcs.sql` | `credits_add`, `reserve_credits`, `deduct_credits`, `get_credits_balance` RPCs (SECURITY DEFINER, service_role only) |
+| `003_pricing_config.sql` | `credit_pricing_config` table, `get_active_pricing_config`, `set_active_pricing_config` RPCs |
 
 All DDL is idempotent (uses `IF NOT EXISTS` / `CREATE OR REPLACE`).
 
