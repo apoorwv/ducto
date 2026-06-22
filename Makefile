@@ -22,12 +22,15 @@ test: lint typecheck
 publish-test: test build
 	. ./.env && uv publish --publish-url https://test.pypi.org/legacy/
 
-publish: test build
+# Manual publish (use CI release for automated):
+#   1. git tag v$(VERSION)
+#   2. git push origin v$(VERSION)
+#   CI runs lint → typecheck → test → build → publish
+publish: build
 	. ./.env && uv publish
 
 release: publish
 	@echo "Released ducto v$(VERSION)"
-	@echo "Don't forget to update the submodule pointer in zonastery:"
-	@echo "  cd /path/to/zonastery"
-	@echo "  git add packages/ducto"
-	@echo '  git commit -m "chore: update ducto submodule pointer (v$(VERSION))"'
+
+release-ci:
+	@echo "Release via CI: git tag v$(VERSION) && git push origin v$(VERSION)"

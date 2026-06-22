@@ -66,3 +66,22 @@ Implement the `CreditStore` ABC in `ducto/interface/`:
 - All 8 abstract methods must be implemented.
 - Return typed Pydantic models from `ducto/interface/models.py`.
 - Add tests in `tests/test_store.py`.
+
+## Releasing
+
+```bash
+git tag v0.1.2
+git push origin v0.1.2
+```
+
+CI runs lint → typecheck → test → build → publish to PyPI automatically.
+
+Requires a [trusted publisher](https://docs.pypi.org/trusted-publishers/) configured on PyPI:
+
+| Field | Value |
+|---|---|
+| PyPI Project | `ducto` |
+| Workflow name | `ci.yml` |
+| Environment | (leave blank) |
+
+To set it up: https://pypi.org/manage/account/publishing/
