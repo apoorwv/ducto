@@ -9,17 +9,18 @@ from collections.abc import Iterator
 
 import pytest
 
-PG_TMP = shutil.which("pg_tmp") or "/opt/homebrew/bin/pg_tmp"
+PG_TMP: str | None = shutil.which("pg_tmp")
 
 
 @pytest.fixture(scope="function")
 def pg_database_url() -> Iterator[str]:
     """Spin up a disposable Postgres via pg_tmp, yield connection URL.
 
-    The process exits after printing the DSN (postgres keeps running
-    in the background).  The temp dir is cleaned up when the stop
-    timeout expires or on SIGTERM/SIGKILL.
+    Skipped when pg_tmp is not available (eg CI runners).
     """
+    if PG_TMP is None:
+        pytest.skip("pg_tmp not available — install ephemeralpg via brew")
+
     proc = subprocess.Popen(
         [PG_TMP, "-w", "60"],
         stdout=subprocess.PIPE,
