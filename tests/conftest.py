@@ -16,7 +16,9 @@ PG_TMP: str | None = shutil.which("pg_tmp")
 def pg_database_url() -> Iterator[str]:
     """Spin up a disposable Postgres via pg_tmp, yield connection URL.
 
-    Skipped when pg_tmp is not available (eg CI runners).
+    The process exits after printing the DSN (postgres keeps running
+    in the background).  The temp dir is cleaned up when the stop
+    timeout expires or on SIGTERM/SIGKILL.
     """
     if PG_TMP is None:
         pytest.skip("pg_tmp not available — install ephemeralpg via brew")
