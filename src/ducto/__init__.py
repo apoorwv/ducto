@@ -1,6 +1,6 @@
 """ducto — declarative credit calculation engine for AI SaaS platforms."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from ducto.breakdown import CostBreakdown
 from ducto.config import ConfigError, PricingConfig
