@@ -100,6 +100,7 @@ def _pricing_set(args: list[str]) -> None:
         except Exception as exc:
             if attempt == _RETRIES - 1:
                 print(f"Failed to set pricing: {exc}", file=sys.stderr)
+                print("Tip: Ensure 'ducto migrate' has been run and the schema cache has refreshed.", file=sys.stderr)
                 sys.exit(1)
             time.sleep(_RETRY_DELAY)
 
@@ -117,6 +118,7 @@ def _pricing_get() -> None:
         except Exception as exc:
             if attempt == _RETRIES - 1:
                 print(f"Failed to get pricing: {exc}", file=sys.stderr)
+                print("Tip: Ensure 'ducto migrate' has been run and the schema cache has refreshed.", file=sys.stderr)
                 sys.exit(1)
             time.sleep(_RETRY_DELAY)
 

@@ -142,7 +142,6 @@ postgres = [
 supabase = [
     { name = "httpx" },
     { name = "psycopg2-binary" },
-    { name = "pyyaml" },
 ]
 test = [
     { name = "pyright" },
@@ -166,7 +165,6 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
     { name = "pytest-testmon", marker = "extra == 'test'", specifier = ">=2.0.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "pyyaml", marker = "extra == 'supabase'", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'test'", specifier = ">=0.15.0" },
 ]
 provides-extras = ["supabase", "postgres", "test"]

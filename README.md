@@ -1,5 +1,9 @@
 # ducto
 
+[![CI](https://github.com/apoorwv/ducto/actions/workflows/ci.yml/badge.svg)](https://github.com/apoorwv/ducto/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 Declarative credit calculation engine for AI SaaS platforms.
 
 Pricing expressions stored in a `credit_pricing_config` table enable live

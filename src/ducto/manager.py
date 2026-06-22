@@ -95,7 +95,6 @@ class CreditManager:
                 "Call publish_pricing_from_dict() or set_active_pricing() first."
             )
         engine_dict = active.config.model_dump(exclude_none=True)
-        engine_dict["version"] = active.version
         self._engine = PricingEngine.from_dict(engine_dict)
 
     def publish_pricing(
@@ -136,10 +135,15 @@ class CreditManager:
         amount: int,
         operation_type: str = "usage",
         metadata: CreditMetadata | None = None,
-        min_balance: int = 5,
+        min_balance: int | None = None,
     ) -> ReserveResult:
-        """Reserve credits for an upcoming operation."""
-        return self._store.reserve_credits(user_id, amount, operation_type, metadata, min_balance)
+        """Reserve credits for an upcoming operation.
+
+        If ``min_balance`` is not specified, the engine's configured minimum
+        is used (defaults to 5 if no engine is loaded).
+        """
+        actual = min_balance if min_balance is not None else (self._engine.min_balance if self._engine else 5)
+        return self._store.reserve_credits(user_id, amount, operation_type, metadata, actual)
 
     def deduct(
         self,
@@ -171,6 +175,7 @@ class CreditManager:
 
         # 1) Calculate cost
         breakdown = self._engine.calculate(metrics)
+        # Truncate fractional credits (always rounds down — consumer-friendly pricing)
         cost = int(breakdown.total) if breakdown.total > 0 else 0
 
         # 2) Build transaction metadata (merge user-provided over defaults)

@@ -128,12 +128,19 @@ class MemoryStore(CreditStore):
                 error="insufficient_credits",
             )
 
-        capped = min(amount, available)
+        if amount > available:
+            return ReserveResult(
+                reservation_id="",
+                user_id=user_id,
+                amount=0,
+                error="insufficient_credits",
+            )
+
         rid = str(uuid.uuid4())
         self._reservations[rid] = _ReservationRecord(
             id=rid,
             user_id=user_id,
-            amount=capped,
+            amount=amount,
             operation_type=operation_type,
             metadata=metadata.model_dump() if metadata else {},
         )
@@ -141,9 +148,9 @@ class MemoryStore(CreditStore):
         return ReserveResult(
             reservation_id=rid,
             user_id=user_id,
-            amount=capped,
+            amount=amount,
             balance=balance,
-            reserved_total=reserved_total + capped,
+            reserved_total=reserved_total + amount,
         )
 
     def deduct_credits(

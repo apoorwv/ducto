@@ -189,7 +189,7 @@ class TestReserve:
         assert r1.error is None
         assert r1.amount == 30
 
-        # Try reserving more than available (balance=100, reserved=30, available=70)
-        r2 = manager.reserve_credits("user_1", 80)  # 80 > 70 → would hit min_balance issue
-        # available=70, min_balance=5, 70 >= 5, cap at LEAST(80, 70) = 70
-        assert r2.amount == 70
+        # Requesting more than available returns an error
+        r2 = manager.reserve_credits("user_1", 80)  # 80 > 70 → insufficient credits
+        assert r2.error == "insufficient_credits"
+        assert r2.amount == 0

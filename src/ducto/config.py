@@ -1,5 +1,7 @@
 """Pricing config loading with pydantic validation and expression validation."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field, NonNegativeInt, model_validator
 
 from ducto.expr import ExpressionError, validate_expression
@@ -19,6 +21,22 @@ class PricingConfig(BaseModel):
     cache: dict[str, str] = Field(default_factory=dict)
     min_balance: int = Field(default=5, ge=0)
     fixed: dict[str, NonNegativeInt] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_structure(cls, data: Any) -> Any:
+        """Validate top-level structure before field validation."""
+        if not isinstance(data, dict):
+            return data
+        if "version" not in data:
+            raise ConfigError("missing required field: version")
+        if data.get("version") != 1:
+            raise ConfigError(f"unsupported version: {data['version']} — must be 1")
+        if "models" not in data:
+            raise ConfigError("missing required section: models")
+        if not isinstance(data["models"], dict) or len(data["models"]) == 0:
+            raise ConfigError("models must be a non-empty dict")
+        return data
 
     @model_validator(mode="after")
     def validate_expressions(self) -> "PricingConfig":
@@ -48,19 +66,6 @@ class PricingConfig(BaseModel):
         return self
 
 
-def _validate_and_clean(data: dict) -> dict:
-    """Validate top-level structure before pydantic parsing."""
-    if "version" not in data:
-        raise ConfigError("missing required field: version")
-    if data.get("version") != 1:
-        raise ConfigError("unsupported version: must be 1")
-    if "models" not in data:
-        raise ConfigError("missing required section: models")
-    if not isinstance(data["models"], dict) or len(data["models"]) == 0:
-        raise ConfigError("models must be a non-empty dict")
-    return data
-
-
 def load_config_from_dict(data: dict) -> PricingConfig:
     """Load and validate a pricing config from a dictionary.
 
@@ -73,5 +78,4 @@ def load_config_from_dict(data: dict) -> PricingConfig:
     Raises:
         ConfigError: If the config structure or expressions are invalid.
     """
-    cleaned = _validate_and_clean(data)
-    return PricingConfig.model_validate(cleaned)
+    return PricingConfig.model_validate(data)

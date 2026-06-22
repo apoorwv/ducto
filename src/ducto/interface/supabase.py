@@ -6,13 +6,9 @@ dependency in the critical path.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ducto.interface.base import CreditStore
-
-if TYPE_CHECKING:
-    pass
 from ducto.interface.models import (
     AddCreditsResult,
     BalanceResult,
@@ -23,16 +19,7 @@ from ducto.interface.models import (
     ReserveResult,
     SetupResult,
 )
-
-_SQL_DIR = Path(__file__).resolve().parent.parent / "sql"
-
-
-def _get_sql_files() -> list[Path]:
-    """Return bundled SQL file paths in order by leading numeric prefix."""
-    return sorted(
-        _SQL_DIR.glob("[0-9]*.sql"),
-        key=lambda p: int(p.stem.split("_", 1)[0]),
-    )
+from ducto.sql import _get_sql_files
 
 
 def run_migrations(database_url: str) -> SetupResult:

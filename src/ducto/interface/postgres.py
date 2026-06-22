@@ -6,8 +6,6 @@ Postgres database that has the ducto schema installed.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from ducto.interface.base import CreditStore
 from ducto.interface.models import (
     AddCreditsResult,
@@ -19,12 +17,7 @@ from ducto.interface.models import (
     ReserveResult,
     SetupResult,
 )
-
-
-def _get_sql_files() -> list[Path]:
-    """Return bundled SQL file paths in order."""
-    sql_dir = Path(__file__).resolve().parent.parent / "sql"
-    return sorted(sql_dir.glob("[0-9]*.sql"))
+from ducto.sql import _get_sql_files
 
 
 class PostgresStore(CreditStore):

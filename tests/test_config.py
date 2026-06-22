@@ -5,8 +5,10 @@ from pydantic import ValidationError
 
 from ducto.config import (
     ConfigError,
+    PricingConfig,
     load_config_from_dict,
 )
+from ducto.interface.models import PricingConfigData
 
 
 class TestConfigValidation:
@@ -91,3 +93,17 @@ class TestConfigValidation:
             }
         )
         assert config.fixed["batch_job"] == 20
+
+    def test_pricing_config_field_alignment(self) -> None:
+        """PricingConfig and PricingConfigData fields stay in sync.
+
+        Prevents silent data loss when fields are added to one model but not the other.
+        The validated config (PricingConfig) and raw data model (PricingConfigData)
+        must share the same set of fields for reliable round-trip through stores.
+        """
+        config_fields = set(PricingConfig.model_fields.keys())
+        data_fields = set(PricingConfigData.model_fields.keys())
+        assert config_fields == data_fields, (
+            f"Field drift: PricingConfig has {config_fields - data_fields}, "
+            f"PricingConfigData has {data_fields - config_fields}"
+        )
