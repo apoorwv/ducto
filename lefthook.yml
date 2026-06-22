@@ -1,0 +1,35 @@
+# ── Pre-Commit Hooks ────────────────────────────────────────────────
+
+pre-commit:
+  piped: true
+  commands:
+    format:
+      glob: "**/*.py"
+      run: uvx ruff format --quiet {staged_files}
+      stage_fixed: true
+    lint:
+      glob: "**/*.py"
+      run: uvx ruff check --fix {staged_files}
+      stage_fixed: true
+    trailing-whitespace:
+      run: git diff --cached --name-only --diff-filter=ACM | xargs -r git diff --check --cached --
+    merge-conflicts:
+      run: |
+        files=$(git diff --cached --name-only --diff-filter=ACM | grep -v '^lefthook\.yml$')
+        if [ -z "$files" ]; then exit 0; fi
+        if echo "$files" | xargs grep -l -E '^(<{7} |={7}|>{7})' > /dev/null 2>&1; then
+          echo "Merge conflict markers found in staged files" >&2
+          exit 1
+        fi
+
+# ── Pre-Push Hooks ──────────────────────────────────────────────────
+
+pre-push:
+  parallel: true
+  commands:
+    typecheck:
+      glob: "{src,tests}/**/*.py"
+      run: uv run pyright
+    test:
+      glob: "{src,tests}/**/*.py"
+      run: uv run python -m pytest tests/ -q
