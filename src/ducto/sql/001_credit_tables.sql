@@ -1,6 +1,18 @@
 -- ducto: core credit tables.
 -- Idempotent — safe to run multiple times (CREATE IF NOT EXISTS).
 
+-- Utility trigger function: sets updated_at on row modification.
+-- Self-contained so the migration works even without Supabase's built-in.
+CREATE OR REPLACE FUNCTION public.handle_updated_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$;
+
 -- Enum type for transaction categories. Extensible via ALTER TYPE ... ADD VALUE.
 DO $$ BEGIN
     CREATE TYPE public.credit_tx_type AS ENUM (
