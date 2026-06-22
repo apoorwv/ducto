@@ -285,6 +285,3 @@ ruff format .
 pyright
 ```
 
-## License
-
-MIT (c) Apurv Wagh
