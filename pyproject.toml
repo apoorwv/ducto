@@ -49,6 +49,7 @@ test = [
     "ruff>=0.15.0",
     "pyright",
     "pytest-testmon>=2.0.0",
+    "pytest-postgresql>=7.0",
 ]
 
 [tool.setuptools.package-data]

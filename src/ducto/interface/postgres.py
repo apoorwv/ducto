@@ -6,6 +6,8 @@ Postgres database that has the ducto schema installed.
 
 from __future__ import annotations
 
+import json
+
 from ducto.interface.base import CreditStore
 from ducto.interface.models import (
     AddCreditsResult,
@@ -90,14 +92,14 @@ class PostgresStore(CreditStore):
             with conn.cursor() as cur:
                 cur.callproc(
                     "credits_add",
-                    [user_id, amount, type, metadata.model_dump(mode="json") if metadata else {}],
+                    [user_id, amount, type, json.dumps(metadata.model_dump(mode="json")) if metadata else "{}"],
                 )
                 row = cur.fetchone()
             conn.commit()
         finally:
             conn.close()
 
-        result_dict = row[0] if row and isinstance(row[0], dict) else {}
+        result_dict = row[0] if row else {}
         return AddCreditsResult(
             transaction_id=str(result_dict.get("id", "")),
             user_id=str(result_dict.get("user_id", user_id)),
@@ -123,7 +125,7 @@ class PostgresStore(CreditStore):
                         user_id,
                         amount,
                         operation_type,
-                        metadata.model_dump(mode="json") if metadata else {},
+                        json.dumps(metadata.model_dump(mode="json")) if metadata else "{}",
                         min_balance,
                     ],
                 )
@@ -169,7 +171,7 @@ class PostgresStore(CreditStore):
             with conn.cursor() as cur:
                 cur.callproc(
                     "deduct_credits",
-                    [user_id, reservation_id, amount, meta],
+                    [user_id, reservation_id, amount, json.dumps(meta)],
                 )
                 row = cur.fetchone()
             conn.commit()
@@ -233,7 +235,7 @@ class PostgresStore(CreditStore):
             with conn.cursor() as cur:
                 cur.callproc(
                     "set_active_pricing_config",
-                    [config.model_dump(mode="json"), label],
+                    [json.dumps(config.model_dump(mode="json")), label],
                 )
                 row = cur.fetchone()
             conn.commit()
