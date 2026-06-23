@@ -18,25 +18,30 @@ export { CreditManager } from "./manager.js";
 
 // Types
 export type {
+  AddTeamMemberResult,
   AllowanceResult,
+  BalanceResult,
+  CreateTeamResult,
   CreditMetadata,
   DailySpendRow,
+  DeductionResult,
   GetUserPlanResult,
   PlanDefinition,
   PricingConfigData,
   PricingConfigV2,
   PricingConfigResult,
   RefundResult,
+  ReserveResult,
   SetUserPlanResult,
+  SetupResult,
   SpendByModelRow,
   SpendByUserRow,
   SweepResult,
+  Team,
+  TeamBalanceResult,
+  TeamDeductionResult,
+  TeamMember,
   TopUserRow,
-  BalanceResult,
-  AddCreditsResult,
-  ReserveResult,
-  DeductionResult,
-  SetupResult,
 } from "./types.js";
 
 // Stores

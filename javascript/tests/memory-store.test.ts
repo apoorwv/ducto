@@ -13,7 +13,7 @@ describe("MemoryStore", () => {
     it("returns setup result with table names", async () => {
       const result = await store.setup();
       expect(result.success).toBe(true);
-      expect(result.tablesCreated).toHaveLength(7);
+      expect(result.tablesCreated).toHaveLength(8);
     });
   });
 
@@ -390,6 +390,92 @@ describe("MemoryStore", () => {
       // 50 expired, balance is 80, so expire min(50, 80) = 50
       expect(result.expiredAmount).toBe(50);
       expect((await store.getBalance("user-1")).balance).toBe(30);
+    });
+  });
+
+  describe("team balance pools", () => {
+    it("creates a team and returns its balance", async () => {
+      const team = await store.createTeam("Engineering");
+      expect(team.teamId).toBeTruthy();
+      expect(team.name).toBe("Engineering");
+
+      const balance = await store.getTeamBalance(team.teamId);
+      expect(balance.name).toBe("Engineering");
+      expect(balance.balance).toBe(0);
+      expect(balance.memberCount).toBe(0);
+    });
+
+    it("createTeam with initial balance", async () => {
+      const team = await store.createTeam("Pro Team", 1000);
+      const balance = await store.getTeamBalance(team.teamId);
+      expect(balance.balance).toBe(1000);
+    });
+
+    it("adds member and tracks member count", async () => {
+      const team = await store.createTeam("Team A", 500);
+      await store.addTeamMember(team.teamId, "user-1", "admin");
+      await store.addTeamMember(team.teamId, "user-2", "member");
+
+      const balance = await store.getTeamBalance(team.teamId);
+      expect(balance.memberCount).toBe(2);
+
+      const members = await store.getTeamMembers(team.teamId);
+      expect(members).toHaveLength(2);
+      expect(members[0].role).toBe("admin");
+    });
+
+    it("getTeamMembers with spend cap", async () => {
+      const team = await store.createTeam("Capped Team", 5000);
+      await store.addTeamMember(team.teamId, "user-1", "member", 100);
+      const members = await store.getTeamMembers(team.teamId);
+      expect(members[0].spendCap).toBe(100);
+    });
+
+    it("deductTeam debits team pool not user balance", async () => {
+      await store.addCredits("user-1", 100); // user balance
+      const team = await store.createTeam("Pool", 500);
+      await store.addTeamMember(team.teamId, "user-1", "member");
+
+      const result = await store.deductTeam(team.teamId, "user-1", 50);
+      expect(result.error).toBeUndefined();
+      expect(result.amount).toBe(-50);
+      expect(result.teamBalanceAfter).toBe(450);
+
+      // User balance unchanged
+      const userBal = await store.getBalance("user-1");
+      expect(userBal.balance).toBe(100);
+    });
+
+    it("deductTeam insufficient team balance returns error", async () => {
+      const team = await store.createTeam("Poor Team", 10);
+      await store.addTeamMember(team.teamId, "user-1", "member");
+      const result = await store.deductTeam(team.teamId, "user-1", 100);
+      expect(result.error).toBe("insufficient_team_balance");
+    });
+
+    it("deductTeam user not in team returns error", async () => {
+      const team = await store.createTeam("Closed Team", 500);
+      const result = await store.deductTeam(team.teamId, "user-1", 10);
+      expect(result.error).toBe("user_not_in_team");
+    });
+
+    it("deductTeam spend cap blocks overspend", async () => {
+      const team = await store.createTeam("Capped", 1000);
+      await store.addTeamMember(team.teamId, "user-1", "member", 50);
+
+      // First deduct: 30 (within cap)
+      const r1 = await store.deductTeam(team.teamId, "user-1", 30);
+      expect(r1.error).toBeUndefined();
+      expect(r1.teamBalanceAfter).toBe(970);
+
+      // Second deduct: 30 (50 cap - 30 spent = 20 remaining, 30 > 20)
+      const r2 = await store.deductTeam(team.teamId, "user-1", 30);
+      expect(r2.error).toBe("spend_cap_exceeded");
+    });
+
+    it("deductTeam non-existent team returns error", async () => {
+      const result = await store.deductTeam("no-such-team", "user-1", 10);
+      expect(result.error).toBe("team_not_found");
     });
   });
 });

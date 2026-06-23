@@ -317,3 +317,89 @@ def test_load_pricing_file_json(tmp_path) -> None:
     data = _load_pricing_file(str(f))
     assert data["version"] == 1
     assert data["models"]["_default"] == "input_tokens * 1"
+
+
+# ── Team/shared balance pools ─────────────────────────────────────────
+
+
+class TestTeamBalances:
+    def test_create_team_and_get_balance(self) -> None:
+        store = MemoryStore()
+        result = store.create_team("Engineering")
+        assert result.team_id != ""
+        assert result.name == "Engineering"
+
+        balance = store.get_team_balance(result.team_id)
+        assert balance.name == "Engineering"
+        assert balance.balance == 0
+        assert balance.member_count == 0
+
+    def test_create_team_with_initial_balance(self) -> None:
+        store = MemoryStore()
+        result = store.create_team("Pro Team", initial_balance=1000)
+        balance = store.get_team_balance(result.team_id)
+        assert balance.balance == 1000
+
+    def test_add_team_member_and_track_members(self) -> None:
+        store = MemoryStore()
+        team = store.create_team("Team A", 500)
+        store.add_team_member(team.team_id, "user-1", role="admin")
+        store.add_team_member(team.team_id, "user-2", role="member")
+
+        balance = store.get_team_balance(team.team_id)
+        assert balance.member_count == 2
+
+        members = store.get_team_members(team.team_id)
+        assert len(members) == 2
+        assert members[0].role == "admin"
+
+    def test_add_team_member_with_spend_cap(self) -> None:
+        store = MemoryStore()
+        team = store.create_team("Capped Team", 5000)
+        store.add_team_member(team.team_id, "user-1", spend_cap=100)
+        members = store.get_team_members(team.team_id)
+        assert members[0].spend_cap == 100
+
+    def test_deduct_team_debits_team_pool_not_user_balance(self) -> None:
+        store = MemoryStore()
+        store.add_credits("user-1", 100)  # user balance
+        team = store.create_team("Pool", 500)
+        store.add_team_member(team.team_id, "user-1")
+
+        result = store.deduct_team(team.team_id, "user-1", 50)
+        assert result.error is None
+        assert result.amount == -50
+        assert result.team_balance_after == 450
+
+        # User balance unchanged
+        assert store.get_balance("user-1").balance == 100
+
+    def test_deduct_team_insufficient_balance(self) -> None:
+        store = MemoryStore()
+        team = store.create_team("Poor Team", 10)
+        store.add_team_member(team.team_id, "user-1")
+        result = store.deduct_team(team.team_id, "user-1", 100)
+        assert result.error == "insufficient_team_balance"
+
+    def test_deduct_team_user_not_in_team(self) -> None:
+        store = MemoryStore()
+        team = store.create_team("Closed Team", 500)
+        result = store.deduct_team(team.team_id, "user-1", 10)
+        assert result.error == "user_not_in_team"
+
+    def test_deduct_team_spend_cap_blocks_overspend(self) -> None:
+        store = MemoryStore()
+        team = store.create_team("Capped", 1000)
+        store.add_team_member(team.team_id, "user-1", role="member", spend_cap=50)
+
+        r1 = store.deduct_team(team.team_id, "user-1", 30)
+        assert r1.error is None
+        assert r1.team_balance_after == 970
+
+        r2 = store.deduct_team(team.team_id, "user-1", 30)
+        assert r2.error == "spend_cap_exceeded"
+
+    def test_deduct_team_nonexistent_team(self) -> None:
+        store = MemoryStore()
+        result = store.deduct_team("no-such-team", "user-1", 10)
+        assert result.error == "team_not_found"

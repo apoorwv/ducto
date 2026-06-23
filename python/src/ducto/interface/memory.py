@@ -11,8 +11,10 @@ from pydantic import BaseModel
 from ducto.interface.base import CreditStore
 from ducto.interface.models import (
     AddCreditsResult,
+    AddTeamMemberResult,
     AllowanceResult,
     BalanceResult,
+    CreateTeamResult,
     CreditMetadata,
     DailySpendRow,
     DeductionResult,
@@ -27,6 +29,9 @@ from ducto.interface.models import (
     SpendByModelRow,
     SpendByUserRow,
     SweepResult,
+    TeamBalanceResult,
+    TeamDeductionResult,
+    TeamMemberResult,
     TopUserRow,
 )
 
@@ -73,6 +78,8 @@ class MemoryStore(CreditStore):
         self._plan_definitions: dict[str, PlanDefinition] = {}
         self._user_plan_map: dict[str, str] = {}
         self._usage_windows: list[dict] = []
+        self._teams: dict[str, dict] = {}
+        self._team_members: dict[str, dict[str, dict]] = {}
 
     # ── Schema management ──────────────────────────────────────────────
 
@@ -86,6 +93,7 @@ class MemoryStore(CreditStore):
                 "005_credit_refunds.sql",
                 "006_credit_expiry.sql",
                 "007_usage_analytics.sql",
+                "008_team_balances.sql",
             ],
         )
 
@@ -500,3 +508,143 @@ class MemoryStore(CreditStore):
             DailySpendRow(date=date, total_spend=v["total"], transaction_count=v["count"])
             for date, v in sorted(by_day.items())
         ]
+
+    # ── Team/shared balance pools ─────────────────────────────────────────
+
+    def create_team(self, name: str, initial_balance: int = 0) -> CreateTeamResult:
+        team_id = str(uuid.uuid4())
+        self._teams[team_id] = {
+            "id": team_id,
+            "name": name,
+            "balance": initial_balance,
+            "member_count": 0,
+            "created_at": datetime.now().isoformat(),
+        }
+        self._team_members[team_id] = {}
+        return CreateTeamResult(team_id=team_id, name=name)
+
+    def get_team_balance(self, team_id: str) -> TeamBalanceResult:
+        team = self._teams.get(team_id)
+        if not team:
+            return TeamBalanceResult(team_id=team_id)
+        return TeamBalanceResult(
+            team_id=team["id"],
+            name=team["name"],
+            balance=team["balance"],
+            member_count=team["member_count"],
+        )
+
+    def add_team_member(
+        self,
+        team_id: str,
+        user_id: str,
+        role: str = "member",
+        spend_cap: int | None = None,
+    ) -> AddTeamMemberResult:
+        members = self._team_members.get(team_id)
+        if members is None:
+            return AddTeamMemberResult(team_id=team_id, user_id=user_id, role="")
+        members[user_id] = {
+            "user_id": user_id,
+            "role": role,
+            "spend_cap": spend_cap,
+            "total_spent": 0,
+        }
+        team = self._teams.get(team_id)
+        if team:
+            team["member_count"] = len(members)
+        return AddTeamMemberResult(team_id=team_id, user_id=user_id, role=role)
+
+    def get_team_members(self, team_id: str) -> list[TeamMemberResult]:
+        members = self._team_members.get(team_id)
+        if not members:
+            return []
+        return [
+            TeamMemberResult(
+                user_id=m["user_id"],
+                role=m["role"],
+                spend_cap=m.get("spend_cap"),
+                total_spent=m["total_spent"],
+            )
+            for m in members.values()
+        ]
+
+    def deduct_team(
+        self,
+        team_id: str,
+        user_id: str,
+        amount: int,
+        metadata: CreditMetadata | None = None,
+    ) -> TeamDeductionResult:
+        team = self._teams.get(team_id)
+        if not team:
+            return TeamDeductionResult(
+                transaction_id="",
+                team_id=team_id,
+                user_id=user_id,
+                amount=0,
+                team_balance_after=0,
+                error="team_not_found",
+            )
+
+        members = self._team_members.get(team_id)
+        member = members.get(user_id) if members else None
+        if not member:
+            return TeamDeductionResult(
+                transaction_id="",
+                team_id=team_id,
+                user_id=user_id,
+                amount=0,
+                team_balance_after=team["balance"],
+                error="user_not_in_team",
+            )
+
+        # Enforce spend cap
+        spend_cap = member.get("spend_cap")
+        if spend_cap is not None and (member["total_spent"] + amount) > spend_cap:
+            return TeamDeductionResult(
+                transaction_id="",
+                team_id=team_id,
+                user_id=user_id,
+                amount=0,
+                team_balance_after=team["balance"],
+                error="spend_cap_exceeded",
+            )
+
+        if team["balance"] < amount:
+            return TeamDeductionResult(
+                transaction_id="",
+                team_id=team_id,
+                user_id=user_id,
+                amount=0,
+                team_balance_after=team["balance"],
+                error="insufficient_team_balance",
+            )
+
+        team["balance"] -= amount
+        member["total_spent"] += amount
+
+        tx_id = str(uuid.uuid4())
+        tx_meta = {
+            "team_id": team_id,
+        }
+        if metadata:
+            tx_meta.update(metadata.model_dump(exclude_none=True))
+        self._transactions.append(
+            _TransactionRecord(
+                id=tx_id,
+                user_id=user_id,
+                amount=-amount,
+                type="team_usage",
+                metadata=tx_meta,
+                created_at=datetime.now().isoformat(),
+            )
+        )
+
+        return TeamDeductionResult(
+            transaction_id=tx_id,
+            team_id=team_id,
+            user_id=user_id,
+            amount=-amount,
+            team_balance_after=team["balance"],
+        )

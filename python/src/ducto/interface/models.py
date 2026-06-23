@@ -206,3 +206,50 @@ class DailySpendRow(BaseModel):
     date: str = ""
     total_spend: int = 0
     transaction_count: int = 0
+
+
+# ── Team/shared balance pools ─────────────────────────────────────────
+
+
+class TeamBalanceResult(BaseModel):
+    """Result of fetching team balance."""
+
+    team_id: str = ""
+    name: str = ""
+    balance: int = 0
+    member_count: int = 0
+
+
+class TeamMemberResult(BaseModel):
+    """A member of a team with optional spend cap."""
+
+    user_id: str = ""
+    role: str = ""
+    spend_cap: int | None = None
+    total_spent: int = 0
+
+
+class CreateTeamResult(BaseModel):
+    """Result of creating a team."""
+
+    team_id: str = ""
+    name: str = ""
+
+
+class AddTeamMemberResult(BaseModel):
+    """Result of adding a team member."""
+
+    team_id: str = ""
+    user_id: str = ""
+    role: str = "member"
+
+
+class TeamDeductionResult(BaseModel):
+    """Result of deducting credits from a team pool."""
+
+    transaction_id: str = ""
+    team_id: str = ""
+    user_id: str = ""
+    amount: int = 0
+    team_balance_after: int = 0
+    error: str | None = None

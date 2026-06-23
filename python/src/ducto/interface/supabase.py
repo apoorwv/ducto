@@ -12,8 +12,10 @@ from typing import Any
 from ducto.interface.base import CreditStore
 from ducto.interface.models import (
     AddCreditsResult,
+    AddTeamMemberResult,
     AllowanceResult,
     BalanceResult,
+    CreateTeamResult,
     CreditMetadata,
     DailySpendRow,
     DeductionResult,
@@ -27,6 +29,9 @@ from ducto.interface.models import (
     SpendByModelRow,
     SpendByUserRow,
     SweepResult,
+    TeamBalanceResult,
+    TeamDeductionResult,
+    TeamMemberResult,
     TopUserRow,
 )
 from ducto.sql import _get_sql_files
@@ -401,6 +406,93 @@ class HttpxSupabaseStore(CreditStore):
             )
             for r in rows
         ]
+
+    # ── Team/shared balance pools ─────────────────────────────────────────
+
+    def create_team(self, name: str, initial_balance: int = 0) -> CreateTeamResult:
+        row = self._rpc("create_team", {"p_name": name, "p_initial_balance": initial_balance})
+        return CreateTeamResult(
+            team_id=str(row.get("team_id", "")),
+            name=str(row.get("name", name)),
+        )
+
+    def get_team_balance(self, team_id: str) -> TeamBalanceResult:
+        row = self._rpc("get_team_balance", {"p_team_id": team_id})
+        if not row or "error" in row:
+            return TeamBalanceResult(team_id=team_id)
+        return TeamBalanceResult(
+            team_id=str(row.get("team_id", team_id)),
+            name=str(row.get("name", "")),
+            balance=int(row.get("balance", 0)),
+            member_count=int(row.get("member_count", 0)),
+        )
+
+    def add_team_member(
+        self,
+        team_id: str,
+        user_id: str,
+        role: str = "member",
+        spend_cap: int | None = None,
+    ) -> AddTeamMemberResult:
+        row = self._rpc(
+            "add_team_member",
+            {
+                "p_team_id": team_id,
+                "p_user_id": user_id,
+                "p_role": role,
+                "p_spend_cap": spend_cap,
+            },
+        )
+        return AddTeamMemberResult(
+            team_id=str(row.get("team_id", team_id)),
+            user_id=str(row.get("user_id", user_id)),
+            role=str(row.get("role", role)),
+        )
+
+    def get_team_members(self, team_id: str) -> list[TeamMemberResult]:
+        rows = self._rpc_list("get_team_members", {"p_team_id": team_id})
+        return [
+            TeamMemberResult(
+                user_id=str(r.get("user_id", "")),
+                role=str(r.get("role", "member")),
+                spend_cap=r.get("spend_cap"),
+                total_spent=int(r.get("total_spent", 0)),
+            )
+            for r in rows
+        ]
+
+    def deduct_team(
+        self,
+        team_id: str,
+        user_id: str,
+        amount: int,
+        metadata: CreditMetadata | None = None,
+    ) -> TeamDeductionResult:
+        row = self._rpc(
+            "deduct_team",
+            {
+                "p_team_id": team_id,
+                "p_user_id": user_id,
+                "p_amount": amount,
+                "p_metadata": (metadata.model_dump(mode="json") if metadata else {}),
+            },
+        )
+        if "error" in row and row["error"]:
+            return TeamDeductionResult(
+                transaction_id="",
+                team_id=team_id,
+                user_id=user_id,
+                amount=0,
+                team_balance_after=int(row.get("team_balance_after", 0)),
+                error=str(row["error"]),
+            )
+        return TeamDeductionResult(
+            transaction_id=str(row.get("transaction_id", "")),
+            team_id=str(row.get("team_id", team_id)),
+            user_id=str(row.get("user_id", user_id)),
+            amount=int(row.get("amount", -amount)),
+            team_balance_after=int(row.get("team_balance_after", 0)),
+        )
 
     # ── Credit expiry ───────────────────────────────────────────────────
 

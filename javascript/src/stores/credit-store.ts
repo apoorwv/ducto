@@ -1,7 +1,9 @@
 import type {
   AddCreditsResult,
+  AddTeamMemberResult,
   AllowanceResult,
   BalanceResult,
+  CreateTeamResult,
   CreditMetadata,
   DailySpendRow,
   DeductionResult,
@@ -15,6 +17,9 @@ import type {
   SpendByModelRow,
   SpendByUserRow,
   SweepResult,
+  TeamBalanceResult,
+  TeamDeductionResult,
+  TeamMember,
   TopUserRow,
 } from "../types.js";
 
@@ -68,4 +73,21 @@ export interface CreditStore {
   spendByModel(start: Date, end: Date): Promise<SpendByModelRow[]>;
   topUsers(limit: number, start: Date, end: Date): Promise<TopUserRow[]>;
   dailySpend(start: Date, end: Date): Promise<DailySpendRow[]>;
+
+  // ── Team/shared balance pools ──────────────────────────────────────
+  createTeam(name: string, initialBalance?: number): Promise<CreateTeamResult>;
+  getTeamBalance(teamId: string): Promise<TeamBalanceResult>;
+  addTeamMember(
+    teamId: string,
+    userId: string,
+    role?: string,
+    spendCap?: number | null,
+  ): Promise<AddTeamMemberResult>;
+  getTeamMembers(teamId: string): Promise<TeamMember[]>;
+  deductTeam(
+    teamId: string,
+    userId: string,
+    amount: number,
+    metadata?: CreditMetadata | null,
+  ): Promise<TeamDeductionResult>;
 }

@@ -1,7 +1,9 @@
 import type {
   AddCreditsResult,
+  AddTeamMemberResult,
   AllowanceResult,
   BalanceResult,
+  CreateTeamResult,
   CreditMetadata,
   DailySpendRow,
   DeductionResult,
@@ -15,6 +17,9 @@ import type {
   SpendByModelRow,
   SpendByUserRow,
   SweepResult,
+  TeamBalanceResult,
+  TeamDeductionResult,
+  TeamMember,
   TopUserRow,
 } from "../types.js";
 import type { CreditStore } from "./credit-store.js";
@@ -330,6 +335,89 @@ export class HttpxSupabaseStore implements CreditStore {
       totalSpend: Number(row.total_spend ?? 0),
       transactionCount: Number(row.transaction_count ?? 0),
     }));
+  }
+
+  // ── Team/shared balance pools ────────────────────────────────────────
+
+  async createTeam(name: string, initialBalance = 0): Promise<CreateTeamResult> {
+    const row = await this.rpc("create_team", { p_name: name, p_initial_balance: initialBalance });
+    return {
+      teamId: String(row.team_id ?? ""),
+      name: String(row.name ?? name),
+    };
+  }
+
+  async getTeamBalance(teamId: string): Promise<TeamBalanceResult> {
+    const row = await this.rpc("get_team_balance", { p_team_id: teamId });
+    if (!row || Object.keys(row).length === 0 || ("error" in row && row.error)) {
+      return { teamId, name: "", balance: 0, memberCount: 0 };
+    }
+    return {
+      teamId: String(row.team_id ?? teamId),
+      name: String(row.name ?? ""),
+      balance: Number(row.balance ?? 0),
+      memberCount: Number(row.member_count ?? 0),
+    };
+  }
+
+  async addTeamMember(
+    teamId: string,
+    userId: string,
+    role = "member",
+    spendCap?: number | null,
+  ): Promise<AddTeamMemberResult> {
+    const row = await this.rpc("add_team_member", {
+      p_team_id: teamId,
+      p_user_id: userId,
+      p_role: role,
+      p_spend_cap: spendCap ?? null,
+    });
+    return {
+      teamId: String(row.team_id ?? teamId),
+      userId: String(row.user_id ?? userId),
+      role: String(row.role ?? role),
+    };
+  }
+
+  async getTeamMembers(teamId: string): Promise<TeamMember[]> {
+    const rows = await this.rpcAll("get_team_members", { p_team_id: teamId });
+    return rows.map((row) => ({
+      userId: String(row.user_id ?? ""),
+      role: String(row.role ?? "member"),
+      spendCap: (row.spend_cap as number | null) ?? null,
+      totalSpent: Number(row.total_spent ?? 0),
+    }));
+  }
+
+  async deductTeam(
+    teamId: string,
+    userId: string,
+    amount: number,
+    metadata?: CreditMetadata | null,
+  ): Promise<TeamDeductionResult> {
+    const row = await this.rpc("deduct_team", {
+      p_team_id: teamId,
+      p_user_id: userId,
+      p_amount: amount,
+      p_metadata: metadata ?? {},
+    });
+    if ("error" in row && row.error) {
+      return {
+        transactionId: "",
+        teamId,
+        userId,
+        amount: 0,
+        teamBalanceAfter: Number(row.team_balance_after ?? 0),
+        error: String(row.error),
+      };
+    }
+    return {
+      transactionId: String(row.transaction_id ?? ""),
+      teamId: String(row.team_id ?? teamId),
+      userId: String(row.user_id ?? userId),
+      amount: Number(row.amount ?? -amount),
+      teamBalanceAfter: Number(row.team_balance_after ?? 0),
+    };
   }
 
   // ── Credit expiry ────────────────────────────────────────────────────

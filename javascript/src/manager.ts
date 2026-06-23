@@ -14,6 +14,7 @@ import type {
   SpendByModelRow,
   SpendByUserRow,
   SweepResult,
+  TeamDeductionResult,
   TopUserRow,
 } from "./types.js";
 import type { CreditStore } from "./stores/credit-store.js";
@@ -204,6 +205,38 @@ export class CreditManager {
     metadata?: CreditMetadata | null,
   ): Promise<RefundResult> {
     return await this.store.refundCredits(transactionId, amount, reason, metadata);
+  }
+
+  /**
+   * Deduct from a team's shared balance pool.
+   * Calculates cost via the pricing engine, then debits the team balance.
+   */
+  async deductTeam(
+    teamId: string,
+    userId: string,
+    metrics: UsageMetrics,
+    metadata?: CreditMetadata | null,
+  ): Promise<TeamDeductionResult> {
+    if (!this.engine)
+      throw new PricingNotLoadedError(
+        "pricing not loaded: call loadPricingFromStore or publishPricing first",
+      );
+
+    const breakdown = this.engine.calculate(metrics);
+    const cost = breakdown.total > 0 ? Math.trunc(breakdown.total) : 0;
+
+    if (cost <= 0) {
+      const teamBal = await this.store.getTeamBalance(teamId);
+      return {
+        transactionId: "",
+        teamId,
+        userId,
+        amount: 0,
+        teamBalanceAfter: teamBal.balance,
+      };
+    }
+
+    return await this.store.deductTeam(teamId, userId, cost, metadata);
   }
 
   /**

@@ -46,6 +46,7 @@ from ducto.interface.models import (
     SpendByModelRow,
     SpendByUserRow,
     SweepResult,
+    TeamDeductionResult,
     TopUserRow,
 )
 from ducto.metrics import UsageMetrics
@@ -276,6 +277,48 @@ class CreditManager:
             ``RefundResult`` with the refund transaction details.
         """
         return self._store.refund_credits(transaction_id, amount, reason, metadata)
+
+    def deduct_team(
+        self,
+        team_id: str,
+        user_id: str,
+        metrics: UsageMetrics,
+        idempotency_key: str | None = None,
+        metadata: CreditMetadata | None = None,
+    ) -> TeamDeductionResult:
+        """Deduct from a team's shared balance pool.
+
+        Calculates cost via the pricing engine, then debits the team pool.
+
+        Args:
+            team_id: The team's UUID.
+            user_id: The user to attribute the deduction to.
+            metrics: Usage metrics (model, tokens, etc.).
+            idempotency_key: Optional idempotency key.
+            metadata: Extra metadata.
+
+        Returns:
+            ``TeamDeductionResult`` with transaction details.
+        """
+        if not self._engine:
+            raise PricingNotLoadedError(
+                "PricingEngine not loaded. Call publish_pricing_from_dict() or load_pricing_from_store() first."
+            )
+
+        breakdown = self._engine.calculate(metrics)
+        cost = int(breakdown.total) if breakdown.total > 0 else 0
+
+        if cost <= 0:
+            team_bal = self._store.get_team_balance(team_id)
+            return TeamDeductionResult(
+                transaction_id="",
+                team_id=team_id,
+                user_id=user_id,
+                amount=0,
+                team_balance_after=team_bal.balance,
+            )
+
+        return self._store.deduct_team(team_id, user_id, cost, metadata)
 
     def sweep_expired_credits(self, dry_run: bool = False) -> SweepResult:
         """Sweep expired credits from all users' balances.

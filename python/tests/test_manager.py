@@ -367,3 +367,52 @@ class TestCreditExpiry:
         assert result.expired_count == 1
         assert result.dry_run is True
         assert mgr.get_balance("user_1").balance == 100
+
+
+class TestTeamDeduct:
+    def test_deduct_team_calculates_cost_and_debits_team(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        team = store.create_team("Team", 500)
+        store.add_team_member(team.team_id, "user-1")
+
+        result = mgr.deduct_team(team.team_id, "user-1", UsageMetrics(input_tokens=100))
+        assert result.amount == -100
+        assert result.team_balance_after == 400
+        assert result.transaction_id != ""
+
+    def test_deduct_team_zero_cost_noop(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        team = store.create_team("Team", 500)
+        store.add_team_member(team.team_id, "user-1")
+
+        result = mgr.deduct_team(team.team_id, "user-1", UsageMetrics(input_tokens=0))
+        assert result.amount == 0
+        assert result.team_balance_after == 500
+
+    def test_deduct_team_requires_pricing_loaded(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        with pytest.raises(PricingNotLoadedError):
+            mgr.deduct_team("team-1", "user-1", UsageMetrics(input_tokens=100))
+
+    def test_deduct_team_insufficient_balance(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        team = store.create_team("Poor Team", 10)
+        store.add_team_member(team.team_id, "user-1")
+
+        result = mgr.deduct_team(team.team_id, "user-1", UsageMetrics(input_tokens=100))
+        assert result.error == "insufficient_team_balance"
+
+    def test_deduct_team_user_not_in_team(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        team = store.create_team("Closed Team", 500)
+        result = mgr.deduct_team(team.team_id, "user-1", UsageMetrics(input_tokens=10))
+        assert result.error == "user_not_in_team"

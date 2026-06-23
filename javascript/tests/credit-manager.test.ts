@@ -333,4 +333,64 @@ describe("CreditManager", () => {
       expect((await manager.getBalance("user-1")).balance).toBe(100);
     });
   });
+
+  describe("team balance pools", () => {
+    it("deductTeam calculates cost and debits team pool", async () => {
+      const store = new MemoryStore();
+      const mgr = new CreditManager(store);
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+
+      const team = await store.createTeam("Team", 500);
+      await store.addTeamMember(team.teamId, "user-1", "member");
+
+      const result = await mgr.deductTeam(team.teamId, "user-1", { inputTokens: 100 });
+      expect(result.amount).toBe(-100);
+      expect(result.teamBalanceAfter).toBe(400);
+      expect(result.transactionId).toBeTruthy();
+    });
+
+    it("deductTeam zero-cost returns without deducting", async () => {
+      const store = new MemoryStore();
+      const mgr = new CreditManager(store);
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+
+      const team = await store.createTeam("Team", 500);
+      await store.addTeamMember(team.teamId, "user-1", "member");
+
+      const result = await mgr.deductTeam(team.teamId, "user-1", { inputTokens: 0 });
+      expect(result.amount).toBe(0);
+      expect(result.teamBalanceAfter).toBe(500);
+    });
+
+    it("deductTeam throws without pricing loaded", async () => {
+      const store = new MemoryStore();
+      const mgr = new CreditManager(store);
+
+      await expect(() => mgr.deductTeam("team-1", "user-1", { inputTokens: 100 })).rejects.toThrow(
+        PricingNotLoadedError,
+      );
+    });
+
+    it("deductTeam insufficient balance returns error", async () => {
+      const store = new MemoryStore();
+      const mgr = new CreditManager(store);
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+
+      const team = await store.createTeam("Poor Team", 10);
+      await store.addTeamMember(team.teamId, "user-1", "member");
+
+      const result = await mgr.deductTeam(team.teamId, "user-1", { inputTokens: 100 });
+      expect(result.error).toBe("insufficient_team_balance");
+    });
+
+    it("deductTeam user not in team returns error", async () => {
+      const store = new MemoryStore();
+      const mgr = new CreditManager(store);
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+
+      const team = await store.createTeam("Closed Team", 500);
+      const result = await mgr.deductTeam(team.teamId, "user-1", { inputTokens: 10 });
+      expect(result.error).toBe("user_not_in_team");
+    });
+  });
 });

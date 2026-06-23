@@ -12,8 +12,10 @@ from datetime import datetime
 from ducto.interface.base import CreditStore
 from ducto.interface.models import (
     AddCreditsResult,
+    AddTeamMemberResult,
     AllowanceResult,
     BalanceResult,
+    CreateTeamResult,
     CreditMetadata,
     DailySpendRow,
     DeductionResult,
@@ -27,6 +29,9 @@ from ducto.interface.models import (
     SpendByModelRow,
     SpendByUserRow,
     SweepResult,
+    TeamBalanceResult,
+    TeamDeductionResult,
+    TeamMemberResult,
     TopUserRow,
 )
 from ducto.sql import _get_sql_files
@@ -447,6 +452,129 @@ class PostgresStore(CreditStore):
             for r in (rows or [])
             if r and isinstance(r[0], dict)
         ]
+
+    # ── Team/shared balance pools ─────────────────────────────────────────
+
+    def create_team(self, name: str, initial_balance: int = 0) -> CreateTeamResult:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("create_team", [name, initial_balance])
+                row = cur.fetchone()
+            conn.commit()
+        finally:
+            conn.close()
+
+        result_dict = row[0] if row and isinstance(row[0], dict) else {}
+        return CreateTeamResult(
+            team_id=str(result_dict.get("team_id", "")),
+            name=str(result_dict.get("name", name)),
+        )
+
+    def get_team_balance(self, team_id: str) -> TeamBalanceResult:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("get_team_balance", [team_id])
+                row = cur.fetchone()
+        finally:
+            conn.close()
+
+        if not row:
+            return TeamBalanceResult(team_id=team_id)
+
+        result_dict = row[0] if isinstance(row[0], dict) else {}
+        if "error" in result_dict and result_dict["error"]:
+            return TeamBalanceResult(team_id=team_id)
+
+        return TeamBalanceResult(
+            team_id=str(result_dict.get("team_id", team_id)),
+            name=str(result_dict.get("name", "")),
+            balance=int(result_dict.get("balance", 0)),
+            member_count=int(result_dict.get("member_count", 0)),
+        )
+
+    def add_team_member(
+        self,
+        team_id: str,
+        user_id: str,
+        role: str = "member",
+        spend_cap: int | None = None,
+    ) -> AddTeamMemberResult:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("add_team_member", [team_id, user_id, role, spend_cap])
+                row = cur.fetchone()
+            conn.commit()
+        finally:
+            conn.close()
+
+        result_dict = row[0] if row and isinstance(row[0], dict) else {}
+        return AddTeamMemberResult(
+            team_id=str(result_dict.get("team_id", team_id)),
+            user_id=str(result_dict.get("user_id", user_id)),
+            role=str(result_dict.get("role", role)),
+        )
+
+    def get_team_members(self, team_id: str) -> list[TeamMemberResult]:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("get_team_members", [team_id])
+                rows = cur.fetchall()
+            conn.commit()
+        finally:
+            conn.close()
+
+        return [
+            TeamMemberResult(
+                user_id=str(r[0].get("user_id", "")),
+                role=str(r[0].get("role", "member")),
+                spend_cap=r[0].get("spend_cap"),
+                total_spent=int(r[0].get("total_spent", 0)),
+            )
+            for r in (rows or [])
+            if r and isinstance(r[0], dict)
+        ]
+
+    def deduct_team(
+        self,
+        team_id: str,
+        user_id: str,
+        amount: int,
+        metadata: CreditMetadata | None = None,
+    ) -> TeamDeductionResult:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc(
+                    "deduct_team",
+                    [team_id, user_id, amount, json.dumps(metadata.model_dump(mode="json") if metadata else {})],
+                )
+                row = cur.fetchone()
+            conn.commit()
+        finally:
+            conn.close()
+
+        result_dict = row[0] if row and isinstance(row[0], dict) else {}
+        if "error" in result_dict and result_dict["error"]:
+            return TeamDeductionResult(
+                transaction_id="",
+                team_id=team_id,
+                user_id=user_id,
+                amount=0,
+                team_balance_after=int(result_dict.get("team_balance_after", 0)),
+                error=str(result_dict["error"]),
+            )
+
+        return TeamDeductionResult(
+            transaction_id=str(result_dict.get("transaction_id", "")),
+            team_id=str(result_dict.get("team_id", team_id)),
+            user_id=str(result_dict.get("user_id", user_id)),
+            amount=int(result_dict.get("amount", -amount)),
+            team_balance_after=int(result_dict.get("team_balance_after", 0)),
+        )
 
     # ── Credit expiry ───────────────────────────────────────────────────
 

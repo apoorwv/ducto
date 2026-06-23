@@ -12,8 +12,10 @@ from datetime import datetime
 
 from ducto.interface.models import (
     AddCreditsResult,
+    AddTeamMemberResult,
     AllowanceResult,
     BalanceResult,
+    CreateTeamResult,
     CreditMetadata,
     DailySpendRow,
     DeductionResult,
@@ -27,6 +29,9 @@ from ducto.interface.models import (
     SpendByModelRow,
     SpendByUserRow,
     SweepResult,
+    TeamBalanceResult,
+    TeamDeductionResult,
+    TeamMemberResult,
     TopUserRow,
 )
 
@@ -243,5 +248,90 @@ class CreditStore(ABC):
 
         Returns:
             List of ``DailySpendRow`` with per-day totals.
+        """
+        ...
+
+    # ── Team/shared balance pools ─────────────────────────────────────────
+
+    @abstractmethod
+    def create_team(
+        self,
+        name: str,
+        initial_balance: int = 0,
+    ) -> CreateTeamResult:
+        """Create a team with a shared credit balance pool.
+
+        Args:
+            name: Human-readable team name.
+            initial_balance: Starting credit balance.
+
+        Returns:
+            ``CreateTeamResult`` with the new team id.
+        """
+        ...
+
+    @abstractmethod
+    def get_team_balance(self, team_id: str) -> TeamBalanceResult:
+        """Fetch team balance and member count.
+
+        Args:
+            team_id: The team's UUID.
+
+        Returns:
+            ``TeamBalanceResult`` with balance and member count.
+        """
+        ...
+
+    @abstractmethod
+    def add_team_member(
+        self,
+        team_id: str,
+        user_id: str,
+        role: str = "member",
+        spend_cap: int | None = None,
+    ) -> AddTeamMemberResult:
+        """Add a user to a team.
+
+        Args:
+            team_id: The team's UUID.
+            user_id: The user's UUID.
+            role: Member role (e.g. "member", "admin").
+            spend_cap: Optional per-user spend cap.
+
+        Returns:
+            ``AddTeamMemberResult`` confirming membership.
+        """
+        ...
+
+    @abstractmethod
+    def get_team_members(self, team_id: str) -> list[TeamMemberResult]:
+        """List all members of a team.
+
+        Args:
+            team_id: The team's UUID.
+
+        Returns:
+            List of ``TeamMemberResult``.
+        """
+        ...
+
+    @abstractmethod
+    def deduct_team(
+        self,
+        team_id: str,
+        user_id: str,
+        amount: int,
+        metadata: CreditMetadata | None = None,
+    ) -> TeamDeductionResult:
+        """Deduct credits from a team pool, attributed to a user.
+
+        Args:
+            team_id: The team's UUID.
+            user_id: The user to attribute the deduction to.
+            amount: Credits to deduct.
+            metadata: Extra metadata.
+
+        Returns:
+            ``TeamDeductionResult`` with transaction details.
         """
         ...

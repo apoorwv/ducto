@@ -1,8 +1,10 @@
 import { randomUUID } from "crypto";
 import type {
   AddCreditsResult,
+  AddTeamMemberResult,
   AllowanceResult,
   BalanceResult,
+  CreateTeamResult,
   CreditMetadata,
   DailySpendRow,
   DeductionResult,
@@ -17,6 +19,9 @@ import type {
   SpendByModelRow,
   SpendByUserRow,
   SweepResult,
+  TeamBalanceResult,
+  TeamDeductionResult,
+  TeamMember,
   TopUserRow,
 } from "../types.js";
 import type { CreditStore } from "./credit-store.js";
@@ -60,6 +65,14 @@ export class MemoryStore implements CreditStore {
     billingPeriod: string;
     usage: number;
   }> = [];
+  private teams = new Map<
+    string,
+    { id: string; name: string; balance: number; memberCount: number; createdAt: string }
+  >();
+  private teamMembers = new Map<
+    string,
+    Map<string, { userId: string; role: string; spendCap: number | null; totalSpent: number }>
+  >();
 
   async setup(_databaseUrl?: string | null): Promise<SetupResult> {
     return {
@@ -71,6 +84,7 @@ export class MemoryStore implements CreditStore {
         "005_credit_refunds.sql",
         "006_credit_expiry.sql",
         "007_usage_analytics.sql",
+        "008_team_balances.sql",
       ],
       rpcsCreated: [],
       errors: [],
@@ -456,6 +470,127 @@ export class MemoryStore implements CreditStore {
   async topUsers(limit: number, start: Date, end: Date): Promise<TopUserRow[]> {
     const byUser = await this.spendByUser(start, end);
     return byUser.sort((a, b) => b.totalSpend - a.totalSpend).slice(0, limit);
+  }
+
+  // ── Team/shared balance pools ────────────────────────────────────────
+
+  async createTeam(name: string, initialBalance = 0): Promise<CreateTeamResult> {
+    const teamId = randomUUID();
+    this.teams.set(teamId, {
+      id: teamId,
+      name,
+      balance: initialBalance,
+      memberCount: 0,
+      createdAt: new Date().toISOString(),
+    });
+    this.teamMembers.set(teamId, new Map());
+    return { teamId, name };
+  }
+
+  async getTeamBalance(teamId: string): Promise<TeamBalanceResult> {
+    const team = this.teams.get(teamId);
+    if (!team) {
+      return { teamId, name: "", balance: 0, memberCount: 0 };
+    }
+    return {
+      teamId: team.id,
+      name: team.name,
+      balance: team.balance,
+      memberCount: team.memberCount,
+    };
+  }
+
+  async addTeamMember(
+    teamId: string,
+    userId: string,
+    role = "member",
+    spendCap?: number | null,
+  ): Promise<AddTeamMemberResult> {
+    const members = this.teamMembers.get(teamId);
+    if (!members) {
+      return { teamId, userId, role: "" };
+    }
+    members.set(userId, { userId, role, spendCap: spendCap ?? null, totalSpent: 0 });
+    const team = this.teams.get(teamId);
+    if (team) {
+      team.memberCount = members.size;
+    }
+    return { teamId, userId, role };
+  }
+
+  async getTeamMembers(teamId: string): Promise<TeamMember[]> {
+    const members = this.teamMembers.get(teamId);
+    if (!members) return [];
+    return Array.from(members.values());
+  }
+
+  async deductTeam(
+    teamId: string,
+    userId: string,
+    amount: number,
+    metadata?: CreditMetadata | null,
+  ): Promise<TeamDeductionResult> {
+    const team = this.teams.get(teamId);
+    if (!team) {
+      return {
+        transactionId: "",
+        teamId,
+        userId,
+        amount: 0,
+        teamBalanceAfter: 0,
+        error: "team_not_found",
+      };
+    }
+    const members = this.teamMembers.get(teamId);
+    const member = members?.get(userId);
+    if (!member) {
+      return {
+        transactionId: "",
+        teamId,
+        userId,
+        amount: 0,
+        teamBalanceAfter: team.balance,
+        error: "user_not_in_team",
+      };
+    }
+
+    // Enforce spend cap
+    if (member.spendCap != null && member.totalSpent + amount > member.spendCap) {
+      return {
+        transactionId: "",
+        teamId,
+        userId,
+        amount: 0,
+        teamBalanceAfter: team.balance,
+        error: "spend_cap_exceeded",
+      };
+    }
+
+    if (team.balance < amount) {
+      return {
+        transactionId: "",
+        teamId,
+        userId,
+        amount: 0,
+        teamBalanceAfter: team.balance,
+        error: "insufficient_team_balance",
+      };
+    }
+
+    team.balance -= amount;
+    member.totalSpent += amount;
+
+    const txId = randomUUID();
+    this.transactions.push({
+      id: txId,
+      userId,
+      amount: -amount,
+      type: "team_usage",
+      metadata: { ...((metadata as Record<string, unknown>) ?? {}), teamId },
+      createdAt: new Date().toISOString(),
+    });
+
+    return { transactionId: txId, teamId, userId, amount: -amount, teamBalanceAfter: team.balance };
   }
 
   async dailySpend(start: Date, end: Date): Promise<DailySpendRow[]> {
