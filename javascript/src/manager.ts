@@ -159,6 +159,14 @@ export class CreditManager {
       };
     }
 
+    // ── Spend cap check ────────────────────────────────────────────────
+    const capResult = await this.store.checkSpendCap(userId, metrics.model ?? null, cost);
+    if (capResult.action === "deny") {
+      throw new InsufficientCreditsError(
+        `Spend cap exceeded: ${capResult.currentSpend}/${capResult.limit}${capResult.model ? " (" + capResult.model + ")" : ""}`,
+      );
+    }
+
     const metaBase: Record<string, unknown> = {
       inputTokens: metrics.inputTokens ?? 0,
       outputTokens: metrics.outputTokens ?? 0,

@@ -3,6 +3,7 @@ import type {
   AddTeamMemberResult,
   AllowanceResult,
   BalanceResult,
+  CapCheckResult,
   CreateTeamResult,
   CreditMetadata,
   DailySpendRow,
@@ -56,6 +57,9 @@ export interface CreditStore {
   setUserPlan(userId: string, planId: string): Promise<SetUserPlanResult>;
   checkAllowance(userId: string): Promise<AllowanceResult>;
   incrementUsageWindow(userId: string, planId: string, amount: number): Promise<void>;
+
+  // ── Spend caps and rate limiting ────────────────────────────────────
+  checkSpendCap(userId: string, model?: string | null, amount?: number): Promise<CapCheckResult>;
 
   // ── Refunds ────────────────────────────────────────────────────────
   refundCredits(

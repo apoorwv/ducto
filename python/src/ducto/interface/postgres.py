@@ -15,6 +15,7 @@ from ducto.interface.models import (
     AddTeamMemberResult,
     AllowanceResult,
     BalanceResult,
+    CapCheckResult,
     CreateTeamResult,
     CreditMetadata,
     DailySpendRow,
@@ -330,6 +331,35 @@ class PostgresStore(CreditStore):
             conn.commit()
         finally:
             conn.close()
+
+    # ── Spend caps and rate limiting ────────────────────────────────────
+
+    def check_spend_cap(
+        self,
+        user_id: str,
+        model: str | None = None,
+        amount: int | None = None,
+    ) -> CapCheckResult:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("check_spend_cap", [user_id, model, amount or 0])
+                row = cur.fetchone()
+            conn.commit()
+        finally:
+            conn.close()
+
+        if not row:
+            return CapCheckResult(capped=False, current_spend=0, cap_limit=0, action=None)
+
+        result_dict = row[0] if isinstance(row[0], dict) else {}
+        return CapCheckResult(
+            capped=bool(result_dict.get("capped", False)),
+            current_spend=int(result_dict.get("current_spend", 0)),
+            cap_limit=int(result_dict.get("cap_limit", 0)),
+            action=str(result_dict.get("action")) if result_dict.get("action") else None,
+            model=str(result_dict.get("model")) if result_dict.get("model") else None,
+        )
 
     # ── Refunds ─────────────────────────────────────────────────────────
 

@@ -4,6 +4,7 @@ import type {
   AddTeamMemberResult,
   AllowanceResult,
   BalanceResult,
+  CapCheckResult,
   CreateTeamResult,
   CreditMetadata,
   DailySpendRow,
@@ -18,6 +19,7 @@ import type {
   SetupResult,
   SpendByModelRow,
   SpendByUserRow,
+  SpendCap,
   SweepResult,
   TeamBalanceResult,
   TeamDeductionResult,
@@ -65,6 +67,7 @@ export class MemoryStore implements CreditStore {
     billingPeriod: string;
     usage: number;
   }> = [];
+  private spendCaps: SpendCap[] = [];
   private teams = new Map<
     string,
     { id: string; name: string; balance: number; memberCount: number; createdAt: string }
@@ -85,6 +88,7 @@ export class MemoryStore implements CreditStore {
         "006_credit_expiry.sql",
         "007_usage_analytics.sql",
         "008_team_balances.sql",
+        "009_spend_caps.sql",
       ],
       rpcsCreated: [],
       errors: [],
@@ -470,6 +474,77 @@ export class MemoryStore implements CreditStore {
   async topUsers(limit: number, start: Date, end: Date): Promise<TopUserRow[]> {
     const byUser = await this.spendByUser(start, end);
     return byUser.sort((a, b) => b.totalSpend - a.totalSpend).slice(0, limit);
+  }
+
+  // ── Spend caps and rate limiting ─────────────────────────────────────
+
+  /** Configure a spend cap (MemoryStore-only helper for testing). */
+  setSpendCap(cap: SpendCap): void {
+    this.spendCaps.push(cap);
+  }
+
+  async checkSpendCap(
+    userId: string,
+    model?: string | null,
+    amount?: number,
+  ): Promise<CapCheckResult> {
+    const userCaps = this.spendCaps.filter((c) => c.userId === userId);
+    if (userCaps.length === 0) {
+      return { capped: false, currentSpend: 0, limit: 0, action: null };
+    }
+
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // Helper: compute spend in a time window
+    const spendInWindow = (windowStart: Date, capModel?: string | null): number => {
+      return this.transactions
+        .filter((t) => {
+          if (t.userId !== userId) return false;
+          if (t.type !== "usage" && t.type !== "team_usage") return false;
+          if (t.amount >= 0) return false;
+          if (capModel != null && t.metadata?.model !== capModel) return false;
+          return new Date(t.createdAt) >= windowStart;
+        })
+        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    };
+
+    // Check deny caps first — most restrictive
+    for (const cap of userCaps) {
+      if (cap.model && cap.model !== model) continue;
+      if (cap.action !== "deny") continue;
+      const windowStart = cap.type === "daily" ? todayStart : monthStart;
+      const currentSpend = spendInWindow(windowStart, cap.model);
+      if (currentSpend + (amount ?? 0) > cap.limit) {
+        return {
+          capped: true,
+          currentSpend,
+          limit: cap.limit,
+          action: "deny",
+          model: cap.model,
+        };
+      }
+    }
+
+    // Check warn/notify caps
+    for (const cap of userCaps) {
+      if (cap.model && cap.model !== model) continue;
+      if (cap.action === "deny") continue;
+      const windowStart = cap.type === "daily" ? todayStart : monthStart;
+      const currentSpend = spendInWindow(windowStart, cap.model);
+      if (currentSpend + (amount ?? 0) > cap.limit) {
+        return {
+          capped: false,
+          currentSpend,
+          limit: cap.limit,
+          action: cap.action,
+          model: cap.model,
+        };
+      }
+    }
+
+    return { capped: false, currentSpend: 0, limit: 0, action: null };
   }
 
   // ── Team/shared balance pools ────────────────────────────────────────

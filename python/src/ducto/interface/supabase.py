@@ -15,6 +15,7 @@ from ducto.interface.models import (
     AddTeamMemberResult,
     AllowanceResult,
     BalanceResult,
+    CapCheckResult,
     CreateTeamResult,
     CreditMetadata,
     DailySpendRow,
@@ -298,6 +299,28 @@ class HttpxSupabaseStore(CreditStore):
         self._rpc(
             "increment_usage_window",
             {"p_user_id": user_id, "p_plan_id": plan_id, "p_amount": amount},
+        )
+
+    # ── Spend caps and rate limiting ────────────────────────────────────
+
+    def check_spend_cap(
+        self,
+        user_id: str,
+        model: str | None = None,
+        amount: int | None = None,
+    ) -> CapCheckResult:
+        row = self._rpc(
+            "check_spend_cap",
+            {"p_user_id": user_id, "p_model": model, "p_amount": amount or 0},
+        )
+        if not row or len(row) == 0:
+            return CapCheckResult(capped=False, current_spend=0, cap_limit=0, action=None)
+        return CapCheckResult(
+            capped=bool(row.get("capped", False)),
+            current_spend=int(row.get("current_spend", 0)),
+            cap_limit=int(row.get("cap_limit", 0)),
+            action=str(row["action"]) if row.get("action") else None,
+            model=str(row["model"]) if row.get("model") else None,
         )
 
     # ── Refunds ─────────────────────────────────────────────────────────

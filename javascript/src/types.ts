@@ -154,6 +154,25 @@ export interface DailySpendRow {
   transactionCount: number;
 }
 
+// ── Spend caps and rate limiting ───────────────────────────────────────
+/** Configuration for a per-user spend cap. */
+export interface SpendCap {
+  userId: string;
+  type: "daily" | "monthly";
+  model?: string | null;
+  limit: number;
+  action: "deny" | "warn" | "notify";
+}
+
+/** Result of checking a spend cap. */
+export interface CapCheckResult {
+  capped: boolean;
+  currentSpend: number;
+  limit: number;
+  action: "deny" | "warn" | "notify" | null;
+  model?: string | null;
+}
+
 // ── Team/shared balance pools ─────────────────────────────────────────
 /** A team with a shared credit balance pool. */
 export interface Team {

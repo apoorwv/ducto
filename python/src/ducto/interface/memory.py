@@ -14,6 +14,7 @@ from ducto.interface.models import (
     AddTeamMemberResult,
     AllowanceResult,
     BalanceResult,
+    CapCheckResult,
     CreateTeamResult,
     CreditMetadata,
     DailySpendRow,
@@ -28,6 +29,7 @@ from ducto.interface.models import (
     SetUserPlanResult,
     SpendByModelRow,
     SpendByUserRow,
+    SpendCap,
     SweepResult,
     TeamBalanceResult,
     TeamDeductionResult,
@@ -80,6 +82,7 @@ class MemoryStore(CreditStore):
         self._usage_windows: list[dict] = []
         self._teams: dict[str, dict] = {}
         self._team_members: dict[str, dict[str, dict]] = {}
+        self._spend_caps: list[SpendCap] = []
 
     # ── Schema management ──────────────────────────────────────────────
 
@@ -94,6 +97,7 @@ class MemoryStore(CreditStore):
                 "006_credit_expiry.sql",
                 "007_usage_analytics.sql",
                 "008_team_balances.sql",
+                "009_spend_caps.sql",
             ],
         )
 
@@ -508,6 +512,73 @@ class MemoryStore(CreditStore):
             DailySpendRow(date=date, total_spend=v["total"], transaction_count=v["count"])
             for date, v in sorted(by_day.items())
         ]
+
+    # ── Spend caps and rate limiting ─────────────────────────────────────
+
+    def set_spend_cap(self, cap: SpendCap) -> None:
+        """Configure a spend cap (MemoryStore-only helper for testing)."""
+        self._spend_caps.append(cap)
+
+    def _exceeds_cap(self, user_id: str, cap: SpendCap, model: str | None, amount: int | None) -> CapCheckResult | None:
+        """Evaluate single cap. Return CapCheckResult if exceeded, None otherwise."""
+        if cap.model and cap.model != model:
+            return None
+        now = datetime.now()
+        if cap.type == "daily":
+            window_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            window_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        current = 0
+        for t in self._transactions:
+            if t.user_id != user_id:
+                continue
+            if t.type not in ("usage", "team_usage") or t.amount >= 0:
+                continue
+            if cap.model is not None and (t.metadata or {}).get("model") != cap.model:
+                continue
+            if t.created_at and t.created_at >= window_start.isoformat():
+                current += abs(t.amount)
+        if current + (amount or 0) > cap.limit:
+            return CapCheckResult(
+                capped=cap.action == "deny",
+                current_spend=current,
+                cap_limit=cap.limit,
+                action=cap.action,
+                model=cap.model,
+            )
+        return None
+
+    def check_spend_cap(
+        self,
+        user_id: str,
+        model: str | None = None,
+        amount: int | None = None,
+    ) -> CapCheckResult:
+        user_caps = [c for c in self._spend_caps if c.user_id == user_id]
+        if not user_caps:
+            return CapCheckResult(capped=False, current_spend=0, cap_limit=0, action=None)
+
+        # Check deny caps first — return first deny hit
+        deny_caps = [c for c in user_caps if c.action == "deny" and (not c.model or c.model == model)]
+        for cap in deny_caps:
+            result = self._exceeds_cap(user_id, cap, model, amount)
+            if result is not None:
+                return result
+
+        # Then warn/notify — return first soft hit
+        soft_caps = [c for c in user_caps if c.action != "deny" and (not c.model or c.model == model)]
+        for cap in soft_caps:
+            result = self._exceeds_cap(user_id, cap, model, amount)
+            if result is not None:
+                return CapCheckResult(
+                    capped=False,
+                    current_spend=result.current_spend,
+                    cap_limit=result.cap_limit,
+                    action=cap.action,
+                    model=cap.model,
+                )
+
+        return CapCheckResult(capped=False, current_spend=0, cap_limit=0, action=None)
 
     # ── Team/shared balance pools ─────────────────────────────────────────
 

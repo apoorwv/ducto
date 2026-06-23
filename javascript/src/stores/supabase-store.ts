@@ -3,6 +3,7 @@ import type {
   AddTeamMemberResult,
   AllowanceResult,
   BalanceResult,
+  CapCheckResult,
   CreateTeamResult,
   CreditMetadata,
   DailySpendRow,
@@ -252,6 +253,30 @@ export class HttpxSupabaseStore implements CreditStore {
       p_plan_id: planId,
       p_amount: amount,
     });
+  }
+
+  // ── Spend caps and rate limiting ──────────────────────────────────────
+
+  async checkSpendCap(
+    userId: string,
+    model?: string | null,
+    amount?: number,
+  ): Promise<CapCheckResult> {
+    const row = await this.rpc("check_spend_cap", {
+      p_user_id: userId,
+      p_model: model ?? null,
+      p_amount: amount ?? 0,
+    });
+    if (!row || Object.keys(row).length === 0) {
+      return { capped: false, currentSpend: 0, limit: 0, action: null };
+    }
+    return {
+      capped: Boolean(row.capped),
+      currentSpend: Number(row.current_spend ?? 0),
+      limit: Number(row.cap_limit ?? 0),
+      action: (row.action as CapCheckResult["action"]) ?? null,
+      model: row.model ? String(row.model) : undefined,
+    };
   }
 
   // ── Refunds ──────────────────────────────────────────────────────────

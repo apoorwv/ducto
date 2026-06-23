@@ -8,7 +8,7 @@ import pytest
 
 from ducto import CreditManager, UsageMetrics
 from ducto.interface.memory import MemoryStore
-from ducto.interface.models import PlanDefinition, PricingConfigV2
+from ducto.interface.models import PlanDefinition, PricingConfigV2, SpendCap
 from ducto.manager import InsufficientCreditsError, PricingNotLoadedError
 
 
@@ -416,3 +416,45 @@ class TestTeamDeduct:
         team = store.create_team("Closed Team", 500)
         result = mgr.deduct_team(team.team_id, "user-1", UsageMetrics(input_tokens=10))
         assert result.error == "user_not_in_team"
+
+
+class TestSpendCapsManager:
+    def test_daily_deny_cap_blocks_deduction(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        store.add_credits("user-1", 1000)
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=10, action="deny"))
+
+        with pytest.raises(InsufficientCreditsError, match="Spend cap exceeded"):
+            mgr.deduct("user-1", UsageMetrics(model="gpt-4", input_tokens=11))
+
+    def test_warn_action_allows_deduction(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        store.add_credits("user-1", 1000)
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=10, action="warn"))
+
+        result = mgr.deduct("user-1", UsageMetrics(model="gpt-4", input_tokens=11))
+        assert result.transaction_id != ""
+
+    def test_notify_action_allows_deduction(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        store.add_credits("user-1", 1000)
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=10, action="notify"))
+
+        result = mgr.deduct("user-1", UsageMetrics(model="gpt-4", input_tokens=11))
+        assert result.transaction_id != ""
+
+    def test_cap_within_limit_allows_deduction(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        store.add_credits("user-1", 1000)
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=100, action="deny"))
+
+        result = mgr.deduct("user-1", UsageMetrics(model="gpt-4", input_tokens=5))
+        assert result.transaction_id != ""

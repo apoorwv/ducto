@@ -208,6 +208,29 @@ class DailySpendRow(BaseModel):
     transaction_count: int = 0
 
 
+# ── Spend caps and rate limiting ───────────────────────────────────────
+
+
+class SpendCap(BaseModel):
+    """Configuration for a per-user spend cap."""
+
+    user_id: str = ""
+    type: str = "daily"  # daily | monthly
+    model: str | None = None
+    limit: int = 0
+    action: str = "deny"  # deny | warn | notify
+
+
+class CapCheckResult(BaseModel):
+    """Result of checking a spend cap."""
+
+    capped: bool = False
+    current_spend: int = 0
+    cap_limit: int = 0
+    action: str | None = None
+    model: str | None = None
+
+
 # ── Team/shared balance pools ─────────────────────────────────────────
 
 

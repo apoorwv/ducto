@@ -15,6 +15,7 @@ from ducto.interface.models import (
     AddTeamMemberResult,
     AllowanceResult,
     BalanceResult,
+    CapCheckResult,
     CreateTeamResult,
     CreditMetadata,
     DailySpendRow,
@@ -153,6 +154,27 @@ class CreditStore(ABC):
     @abstractmethod
     def increment_usage_window(self, user_id: str, plan_id: str, amount: int) -> None:
         """Record allowance consumption for current billing period."""
+        ...
+
+    # ── Spend caps and rate limiting ────────────────────────────────────
+
+    @abstractmethod
+    def check_spend_cap(
+        self,
+        user_id: str,
+        model: str | None = None,
+        amount: int | None = None,
+    ) -> CapCheckResult:
+        """Check whether a pending deduction would exceed any configured cap.
+
+        Args:
+            user_id: The user to check caps for.
+            model: Optional model name for per-model caps.
+            amount: The pending deduction amount.
+
+        Returns:
+            ``CapCheckResult`` with the check result.
+        """
         ...
 
     # ── Refunds ─────────────────────────────────────────────────────────

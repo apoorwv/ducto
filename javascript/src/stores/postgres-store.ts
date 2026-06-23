@@ -3,6 +3,7 @@ import type {
   AddTeamMemberResult,
   AllowanceResult,
   BalanceResult,
+  CapCheckResult,
   CreateTeamResult,
   CreditMetadata,
   DailySpendRow,
@@ -274,6 +275,27 @@ export class PostgresStore implements CreditStore {
 
   async incrementUsageWindow(userId: string, planId: string, amount: number): Promise<void> {
     await this.callproc("increment_usage_window", [userId, planId, amount]);
+  }
+
+  // ── Spend caps and rate limiting ──────────────────────────────────────
+
+  async checkSpendCap(
+    userId: string,
+    model?: string | null,
+    amount?: number,
+  ): Promise<CapCheckResult> {
+    const rows = await this.callproc("check_spend_cap", [userId, model ?? null, amount ?? 0]);
+    if (!rows || rows.length === 0) {
+      return { capped: false, currentSpend: 0, limit: 0, action: null };
+    }
+    const row = rows[0] as Record<string, unknown>;
+    return {
+      capped: Boolean(row.capped),
+      currentSpend: Number(row.current_spend ?? 0),
+      limit: Number(row.cap_limit ?? 0),
+      action: (row.action as CapCheckResult["action"]) ?? null,
+      model: row.model ? String(row.model) : undefined,
+    };
   }
 
   // ── Refunds ──────────────────────────────────────────────────────────

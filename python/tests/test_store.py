@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from ducto import ConfigError, CreditManager, MemoryStore
-from ducto.interface.models import PlanDefinition, PricingConfigData, PricingConfigV2
+from ducto.interface.models import PlanDefinition, PricingConfigData, PricingConfigV2, SpendCap
 
 
 def test_get_pricing_when_none() -> None:
@@ -403,3 +403,56 @@ class TestTeamBalances:
         store = MemoryStore()
         result = store.deduct_team("no-such-team", "user-1", 10)
         assert result.error == "team_not_found"
+
+
+# ── Spend caps and rate limiting ──────────────────────────────────────
+
+
+class TestSpendCaps:
+    def test_no_caps_returns_no_limit(self) -> None:
+        store = MemoryStore()
+        result = store.check_spend_cap("user-1")
+        assert not result.capped
+        assert result.action is None
+
+    def test_deny_when_exceeds_daily_cap(self) -> None:
+        store = MemoryStore()
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=100, action="deny"))
+        result = store.check_spend_cap("user-1", amount=101)
+        assert result.capped
+        assert result.action == "deny"
+
+    def test_allow_within_daily_cap(self) -> None:
+        store = MemoryStore()
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=100, action="deny"))
+        result = store.check_spend_cap("user-1", amount=50)
+        assert not result.capped
+
+    def test_warn_action_allows_through(self) -> None:
+        store = MemoryStore()
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=100, action="warn"))
+        result = store.check_spend_cap("user-1", amount=101)
+        assert not result.capped
+        assert result.action == "warn"
+
+    def test_notify_action_allows_through(self) -> None:
+        store = MemoryStore()
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=100, action="notify"))
+        result = store.check_spend_cap("user-1", amount=101)
+        assert not result.capped
+        assert result.action == "notify"
+
+    def test_per_model_cap_independent(self) -> None:
+        store = MemoryStore()
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=50, action="deny", model="gpt-4"))
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=200, action="deny"))
+
+        assert not store.check_spend_cap("user-1", model="gpt-4", amount=30).capped
+        assert store.check_spend_cap("user-1", model="gpt-4", amount=60).capped
+        assert not store.check_spend_cap("user-1", model="claude-3", amount=150).capped
+
+    def test_caps_only_apply_to_matching_user(self) -> None:
+        store = MemoryStore()
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=100, action="deny"))
+        result = store.check_spend_cap("user-2", amount=200)
+        assert not result.capped

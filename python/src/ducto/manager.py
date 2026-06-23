@@ -207,6 +207,18 @@ class CreditManager:
                 idempotent=False,
             )
 
+        # ── Spend cap check ────────────────────────────────────────────
+        cap_result = self._store.check_spend_cap(
+            user_id=user_id,
+            model=metrics.model,
+            amount=cost,
+        )
+        if cap_result.action == "deny":
+            model_info = f" ({cap_result.model})" if cap_result.model else ""
+            raise InsufficientCreditsError(
+                f"Spend cap exceeded: {cap_result.current_spend}/{cap_result.cap_limit}{model_info}"
+            )
+
         # 2) Build transaction metadata (merge user-provided over defaults)
         base = {
             "input_tokens": metrics.input_tokens,

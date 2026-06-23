@@ -393,4 +393,56 @@ describe("CreditManager", () => {
       expect(result.error).toBe("user_not_in_team");
     });
   });
+
+  describe("spend caps", () => {
+    it("daily deny cap blocks 11th credit", async () => {
+      const store = new MemoryStore();
+      const mgr = new CreditManager(store);
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+
+      await mgr.addCredits("user-1", 1000);
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 10, action: "deny" });
+
+      // 11 tokens would cost 11, which exceeds cap of 10
+      await expect(() => mgr.deduct("user-1", { model: "gpt-4", inputTokens: 11 })).rejects.toThrow(
+        "Spend cap exceeded",
+      );
+    });
+
+    it("warn action allows deduction through", async () => {
+      const store = new MemoryStore();
+      const mgr = new CreditManager(store);
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+
+      await mgr.addCredits("user-1", 1000);
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 10, action: "warn" });
+
+      const result = await mgr.deduct("user-1", { model: "gpt-4", inputTokens: 11 });
+      expect(result.transactionId).toBeTruthy();
+    });
+
+    it("notify action allows deduction through", async () => {
+      const store = new MemoryStore();
+      const mgr = new CreditManager(store);
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+
+      await mgr.addCredits("user-1", 1000);
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 10, action: "notify" });
+
+      const result = await mgr.deduct("user-1", { model: "gpt-4", inputTokens: 11 });
+      expect(result.transactionId).toBeTruthy();
+    });
+
+    it("spend cap does not affect deductions within limit", async () => {
+      const store = new MemoryStore();
+      const mgr = new CreditManager(store);
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+
+      await mgr.addCredits("user-1", 1000);
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 100, action: "deny" });
+
+      const result = await mgr.deduct("user-1", { model: "gpt-4", inputTokens: 5 });
+      expect(result.transactionId).toBeTruthy();
+    });
+  });
 });

@@ -13,7 +13,7 @@ describe("MemoryStore", () => {
     it("returns setup result with table names", async () => {
       const result = await store.setup();
       expect(result.success).toBe(true);
-      expect(result.tablesCreated).toHaveLength(8);
+      expect(result.tablesCreated).toHaveLength(9);
     });
   });
 
@@ -476,6 +476,81 @@ describe("MemoryStore", () => {
     it("deductTeam non-existent team returns error", async () => {
       const result = await store.deductTeam("no-such-team", "user-1", 10);
       expect(result.error).toBe("team_not_found");
+    });
+  });
+
+  describe("checkSpendCap", () => {
+    it("returns no cap when no caps configured", async () => {
+      const result = await store.checkSpendCap("user-1");
+      expect(result.capped).toBe(false);
+      expect(result.action).toBeNull();
+    });
+
+    it("denies when spend exceeds daily cap", async () => {
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 100, action: "deny" });
+      // Simulate existing spend via transactions
+      const result = await store.checkSpendCap("user-1", null, 101);
+      expect(result.capped).toBe(true);
+      expect(result.action).toBe("deny");
+    });
+
+    it("allows when spend is within daily cap", async () => {
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 100, action: "deny" });
+      const result = await store.checkSpendCap("user-1", null, 50);
+      expect(result.capped).toBe(false);
+    });
+
+    it("warn action allows through", async () => {
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 100, action: "warn" });
+      const result = await store.checkSpendCap("user-1", null, 101);
+      expect(result.capped).toBe(false);
+      expect(result.action).toBe("warn");
+    });
+
+    it("notify action allows through", async () => {
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 100, action: "notify" });
+      const result = await store.checkSpendCap("user-1", null, 101);
+      expect(result.capped).toBe(false);
+      expect(result.action).toBe("notify");
+    });
+
+    it("per-model cap is independent of global cap", async () => {
+      store.setSpendCap({
+        userId: "user-1",
+        type: "daily",
+        limit: 50,
+        action: "deny",
+        model: "gpt-4",
+      });
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 200, action: "deny" });
+
+      // Striped model within per-model cap
+      const r1 = await store.checkSpendCap("user-1", "gpt-4", 30);
+      expect(r1.capped).toBe(false);
+
+      // Exceeds per-model cap but within global
+      const r2 = await store.checkSpendCap("user-1", "gpt-4", 60);
+      expect(r2.capped).toBe(true);
+      expect(r2.model).toBe("gpt-4");
+
+      // Other model within global cap only
+      const r3 = await store.checkSpendCap("user-1", "claude-3", 150);
+      expect(r3.capped).toBe(false);
+    });
+
+    it("caps only apply to matching user", async () => {
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 100, action: "deny" });
+      const result = await store.checkSpendCap("user-2", null, 200);
+      expect(result.capped).toBe(false);
+    });
+
+    it("accounts for existing spend in current window", async () => {
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 100, action: "deny" });
+      const result = await store.checkSpendCap("user-1", null, 110);
+      // With no existing transactions, 110 > 100 → denied
+      expect(result.capped).toBe(true);
+      expect(result.currentSpend).toBe(0);
+      expect(result.limit).toBe(100);
     });
   });
 });
