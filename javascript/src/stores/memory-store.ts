@@ -4,6 +4,7 @@ import type {
   AllowanceResult,
   BalanceResult,
   CreditMetadata,
+  DailySpendRow,
   DeductionResult,
   GetUserPlanResult,
   PlanDefinition,
@@ -13,7 +14,10 @@ import type {
   ReserveResult,
   SetUserPlanResult,
   SetupResult,
+  SpendByModelRow,
+  SpendByUserRow,
   SweepResult,
+  TopUserRow,
 } from "../types.js";
 import type { CreditStore } from "./credit-store.js";
 
@@ -26,6 +30,7 @@ interface TransactionRecord {
   referenceType?: string | null;
   referenceId?: string | null;
   expiresAt?: string | null;
+  createdAt: string;
 }
 
 interface ReservationRecord {
@@ -65,6 +70,7 @@ export class MemoryStore implements CreditStore {
         "004_user_plans.sql",
         "005_credit_refunds.sql",
         "006_credit_expiry.sql",
+        "007_usage_analytics.sql",
       ],
       rpcsCreated: [],
       errors: [],
@@ -94,7 +100,13 @@ export class MemoryStore implements CreditStore {
     this.lifetime.set(userId, (this.lifetime.get(userId) ?? 0) + lifetimeAdd);
 
     const txId = randomUUID();
-    const tx: TransactionRecord = { id: txId, userId, amount, type };
+    const tx: TransactionRecord = {
+      id: txId,
+      userId,
+      amount,
+      type,
+      createdAt: new Date().toISOString(),
+    };
     if (expiresAt) {
       tx.expiresAt = expiresAt instanceof Date ? expiresAt.toISOString() : String(expiresAt);
     }
@@ -145,7 +157,7 @@ export class MemoryStore implements CreditStore {
     reservationId: string,
     amount: number,
     idempotencyKey?: string | null,
-    _metadata?: CreditMetadata | null,
+    metadata?: CreditMetadata | null,
   ): Promise<DeductionResult> {
     if (idempotencyKey) {
       const existing = this.transactions.find(
@@ -177,13 +189,22 @@ export class MemoryStore implements CreditStore {
     this.balances.set(userId, current - amount);
     this.reservations.delete(reservationId);
 
+    const txMeta: Record<string, unknown> = {};
+    if (metadata) {
+      for (const [k, v] of Object.entries(metadata)) {
+        if (v != null) txMeta[k] = v;
+      }
+    }
+    if (idempotencyKey) txMeta["idempotencyKey"] = idempotencyKey;
+
     const txId = randomUUID();
     this.transactions.push({
       id: txId,
       userId,
       amount: -amount,
       type: "usage",
-      metadata: idempotencyKey ? { idempotencyKey } : undefined,
+      metadata: txMeta,
+      createdAt: new Date().toISOString(),
     });
 
     return {
@@ -327,6 +348,7 @@ export class MemoryStore implements CreditStore {
       referenceType: reason ?? null,
       referenceId: transactionId as string,
       metadata: reason ? { reason } : undefined,
+      createdAt: new Date().toISOString(),
     });
 
     return {
@@ -375,11 +397,85 @@ export class MemoryStore implements CreditStore {
             amount: -toExpire,
             type: "adjustment",
             metadata: { reason: "credit_expired", expiredAmount: toExpire },
+            createdAt: new Date().toISOString(),
           });
         }
       }
     }
 
     return { expiredCount, expiredAmount, dryRun };
+  }
+
+  // ── Usage analytics ──────────────────────────────────────────────────
+
+  async spendByUser(start: Date, end: Date): Promise<SpendByUserRow[]> {
+    const usage = this.transactions.filter(
+      (t) =>
+        t.type === "usage" &&
+        t.amount < 0 &&
+        new Date(t.createdAt) >= start &&
+        new Date(t.createdAt) <= end,
+    );
+    const byUser = new Map<string, { total: number; count: number }>();
+    for (const t of usage) {
+      const entry = byUser.get(t.userId) ?? { total: 0, count: 0 };
+      entry.total += Math.abs(t.amount);
+      entry.count++;
+      byUser.set(t.userId, entry);
+    }
+    return Array.from(byUser.entries()).map(([userId, { total, count }]) => ({
+      userId,
+      totalSpend: total,
+      transactionCount: count,
+    }));
+  }
+
+  async spendByModel(start: Date, end: Date): Promise<SpendByModelRow[]> {
+    const usage = this.transactions.filter(
+      (t) =>
+        t.type === "usage" &&
+        t.amount < 0 &&
+        new Date(t.createdAt) >= start &&
+        new Date(t.createdAt) <= end,
+    );
+    const byModel = new Map<string, { total: number; count: number }>();
+    for (const t of usage) {
+      const model = (t.metadata?.model as string) ?? "unknown";
+      const entry = byModel.get(model) ?? { total: 0, count: 0 };
+      entry.total += Math.abs(t.amount);
+      entry.count++;
+      byModel.set(model, entry);
+    }
+    return Array.from(byModel.entries()).map(([model, { total, count }]) => ({
+      model,
+      totalSpend: total,
+      transactionCount: count,
+    }));
+  }
+
+  async topUsers(limit: number, start: Date, end: Date): Promise<TopUserRow[]> {
+    const byUser = await this.spendByUser(start, end);
+    return byUser.sort((a, b) => b.totalSpend - a.totalSpend).slice(0, limit);
+  }
+
+  async dailySpend(start: Date, end: Date): Promise<DailySpendRow[]> {
+    const usage = this.transactions.filter(
+      (t) =>
+        t.type === "usage" &&
+        t.amount < 0 &&
+        new Date(t.createdAt) >= start &&
+        new Date(t.createdAt) <= end,
+    );
+    const byDay = new Map<string, { total: number; count: number }>();
+    for (const t of usage) {
+      const date = new Date(t.createdAt).toISOString().slice(0, 10);
+      const entry = byDay.get(date) ?? { total: 0, count: 0 };
+      entry.total += Math.abs(t.amount);
+      entry.count++;
+      byDay.set(date, entry);
+    }
+    return Array.from(byDay.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, { total, count }]) => ({ date, totalSpend: total, transactionCount: count }));
   }
 }

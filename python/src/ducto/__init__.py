@@ -12,6 +12,7 @@ from ducto.interface.models import (
     AllowanceResult,
     BalanceResult,
     CreditMetadata,
+    DailySpendRow,
     DeductionResult,
     GetUserPlanResult,
     PlanDefinition,
@@ -22,7 +23,10 @@ from ducto.interface.models import (
     ReserveResult,
     SetupResult,
     SetUserPlanResult,
+    SpendByModelRow,
+    SpendByUserRow,
     SweepResult,
+    TopUserRow,
 )
 from ducto.manager import CreditManager, InsufficientCreditsError, PricingNotLoadedError
 from ducto.metrics import ToolCall, UsageMetrics
@@ -55,5 +59,9 @@ __all__ = [
     "DeductionResult",
     "PricingConfigResult",
     "SetupResult",
+    "SpendByUserRow",
+    "SpendByModelRow",
+    "TopUserRow",
+    "DailySpendRow",
     "MemoryStore",
 ]

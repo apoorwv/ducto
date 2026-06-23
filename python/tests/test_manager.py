@@ -288,6 +288,59 @@ class TestPlanAllowance:
         assert result.balance_after == 40
 
 
+class TestUsageAnalytics:
+    def test_spend_by_user_through_manager(self, manager: CreditManager) -> None:
+        manager.add_credits("user_1", 100)
+        manager.deduct(
+            user_id="user_1",
+            metrics=UsageMetrics(model="gpt-4", input_tokens=100, output_tokens=0),
+        )
+        from datetime import timedelta
+
+        now = __import__("datetime").datetime.now()
+        rows = manager.spend_by_user(now - timedelta(seconds=10), now + timedelta(seconds=10))
+        assert len(rows) >= 1
+        assert rows[0].user_id == "user_1"
+        assert rows[0].total_spend > 0
+
+    def test_spend_by_model_through_manager(self, manager: CreditManager) -> None:
+        manager.add_credits("user_1", 100)
+        manager.deduct(
+            user_id="user_1",
+            metrics=UsageMetrics(model="gpt-4", input_tokens=100, output_tokens=0),
+        )
+        from datetime import timedelta
+
+        now = __import__("datetime").datetime.now()
+        rows = manager.spend_by_model(now - timedelta(seconds=10), now + timedelta(seconds=10))
+        assert len(rows) >= 1
+
+    def test_top_users_through_manager(self, manager: CreditManager) -> None:
+        manager.add_credits("user_1", 100)
+        manager.deduct(
+            user_id="user_1",
+            metrics=UsageMetrics(model="gpt-4", input_tokens=100, output_tokens=0),
+        )
+        from datetime import timedelta
+
+        now = __import__("datetime").datetime.now()
+        rows = manager.top_users(5, now - timedelta(seconds=10), now + timedelta(seconds=10))
+        assert len(rows) >= 1
+
+    def test_daily_spend_through_manager(self, manager: CreditManager) -> None:
+        manager.add_credits("user_1", 100)
+        manager.deduct(
+            user_id="user_1",
+            metrics=UsageMetrics(model="gpt-4", input_tokens=100, output_tokens=0),
+        )
+        from datetime import timedelta
+
+        now = __import__("datetime").datetime.now()
+        rows = manager.daily_spend(now - timedelta(days=1), now + timedelta(days=1))
+        assert len(rows) >= 1
+        assert rows[0].total_spend > 0
+
+
 class TestCreditExpiry:
     def test_sweep_expired_through_manager(self) -> None:
         store = MemoryStore()

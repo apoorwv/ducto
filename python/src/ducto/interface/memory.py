@@ -14,6 +14,7 @@ from ducto.interface.models import (
     AllowanceResult,
     BalanceResult,
     CreditMetadata,
+    DailySpendRow,
     DeductionResult,
     GetUserPlanResult,
     PlanDefinition,
@@ -23,7 +24,10 @@ from ducto.interface.models import (
     ReserveResult,
     SetupResult,
     SetUserPlanResult,
+    SpendByModelRow,
+    SpendByUserRow,
     SweepResult,
+    TopUserRow,
 )
 
 
@@ -38,6 +42,7 @@ class _TransactionRecord(BaseModel):
     reference_type: str | None = None
     reference_id: str | None = None
     expires_at: str | None = None
+    created_at: str = ""
 
 
 class _ReservationRecord(BaseModel):
@@ -80,6 +85,7 @@ class MemoryStore(CreditStore):
                 "004_user_plans.sql",
                 "005_credit_refunds.sql",
                 "006_credit_expiry.sql",
+                "007_usage_analytics.sql",
             ],
         )
 
@@ -111,6 +117,7 @@ class MemoryStore(CreditStore):
             amount=amount,
             type=type,
             metadata=metadata.model_dump() if metadata else {},
+            created_at=datetime.now().isoformat(),
         )
         if expires_at:
             tx.expires_at = expires_at.isoformat()
@@ -206,6 +213,7 @@ class MemoryStore(CreditStore):
                 amount=-amount,
                 type="usage",
                 metadata=tx_meta,
+                created_at=datetime.now().isoformat(),
             )
         )
 
@@ -359,6 +367,7 @@ class MemoryStore(CreditStore):
                 reference_type=reason,
                 reference_id=transaction_id,
                 metadata=tx_meta,
+                created_at=datetime.now().isoformat(),
             )
         )
 
@@ -408,6 +417,7 @@ class MemoryStore(CreditStore):
                             amount=-to_expire,
                             type="adjustment",
                             metadata={"reason": "credit_expired", "expired_amount": to_expire},
+                            created_at=datetime.now().isoformat(),
                         )
                     )
 
@@ -416,3 +426,77 @@ class MemoryStore(CreditStore):
             expired_amount=expired_amount,
             dry_run=dry_run,
         )
+
+    # ── Usage analytics ─────────────────────────────────────────────────
+
+    def spend_by_user(self, start: datetime, end: datetime) -> list[SpendByUserRow]:
+        """Aggregate spend by user in a time window."""
+        usage = [
+            t
+            for t in self._transactions
+            if t.type == "usage"
+            and t.amount < 0
+            and t.created_at
+            and start.isoformat() <= t.created_at <= end.isoformat()
+        ]
+        by_user: dict[str, dict[str, int]] = {}
+        for t in usage:
+            uid = t.user_id
+            if uid not in by_user:
+                by_user[uid] = {"total": 0, "count": 0}
+            by_user[uid]["total"] += abs(t.amount)
+            by_user[uid]["count"] += 1
+        return [
+            SpendByUserRow(user_id=uid, total_spend=v["total"], transaction_count=v["count"])
+            for uid, v in sorted(by_user.items())
+        ]
+
+    def spend_by_model(self, start: datetime, end: datetime) -> list[SpendByModelRow]:
+        """Aggregate spend by model in a time window."""
+        usage = [
+            t
+            for t in self._transactions
+            if t.type == "usage"
+            and t.amount < 0
+            and t.created_at
+            and start.isoformat() <= t.created_at <= end.isoformat()
+        ]
+        by_model: dict[str, dict[str, int]] = {}
+        for t in usage:
+            model = t.metadata.get("model", "unknown")
+            if model not in by_model:
+                by_model[model] = {"total": 0, "count": 0}
+            by_model[model]["total"] += abs(t.amount)
+            by_model[model]["count"] += 1
+        return [
+            SpendByModelRow(model=model, total_spend=v["total"], transaction_count=v["count"])
+            for model, v in sorted(by_model.items())
+        ]
+
+    def top_users(self, limit: int, start: datetime, end: datetime) -> list[TopUserRow]:
+        """Top users by spend in a time window."""
+        rows = self.spend_by_user(start, end)
+        rows.sort(key=lambda r: r.total_spend, reverse=True)
+        return rows[:limit]
+
+    def daily_spend(self, start: datetime, end: datetime) -> list[DailySpendRow]:
+        """Daily spend aggregation in a time window."""
+        usage = [
+            t
+            for t in self._transactions
+            if t.type == "usage"
+            and t.amount < 0
+            and t.created_at
+            and start.isoformat() <= t.created_at <= end.isoformat()
+        ]
+        by_day: dict[str, dict[str, int]] = {}
+        for t in usage:
+            date = t.created_at[:10]  # YYYY-MM-DD
+            if date not in by_day:
+                by_day[date] = {"total": 0, "count": 0}
+            by_day[date]["total"] += abs(t.amount)
+            by_day[date]["count"] += 1
+        return [
+            DailySpendRow(date=date, total_spend=v["total"], transaction_count=v["count"])
+            for date, v in sorted(by_day.items())
+        ]

@@ -20,6 +20,7 @@ export { CreditManager } from "./manager.js";
 export type {
   AllowanceResult,
   CreditMetadata,
+  DailySpendRow,
   GetUserPlanResult,
   PlanDefinition,
   PricingConfigData,
@@ -27,7 +28,10 @@ export type {
   PricingConfigResult,
   RefundResult,
   SetUserPlanResult,
+  SpendByModelRow,
+  SpendByUserRow,
   SweepResult,
+  TopUserRow,
   BalanceResult,
   AddCreditsResult,
   ReserveResult,

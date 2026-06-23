@@ -3,6 +3,7 @@ import type {
   AllowanceResult,
   BalanceResult,
   CreditMetadata,
+  DailySpendRow,
   DeductionResult,
   GetUserPlanResult,
   PricingConfigData,
@@ -11,7 +12,10 @@ import type {
   ReserveResult,
   SetUserPlanResult,
   SetupResult,
+  SpendByModelRow,
+  SpendByUserRow,
   SweepResult,
+  TopUserRow,
 } from "../types.js";
 import type { CreditStore } from "./credit-store.js";
 
@@ -299,6 +303,55 @@ export class PostgresStore implements CreditStore {
       amount: Number(row.amount ?? 0),
       newBalance: Number(row.new_balance ?? 0),
     };
+  }
+
+  // ── Usage analytics ──────────────────────────────────────────────────
+
+  async spendByUser(start: Date, end: Date): Promise<SpendByUserRow[]> {
+    const rows = await this.callproc("spend_by_user", [start.toISOString(), end.toISOString()]);
+    return (rows ?? []).map((r) => {
+      const row = r as Record<string, unknown>;
+      return {
+        userId: String(row.user_id ?? ""),
+        totalSpend: Number(row.total_spend ?? 0),
+        transactionCount: Number(row.transaction_count ?? 0),
+      };
+    });
+  }
+
+  async spendByModel(start: Date, end: Date): Promise<SpendByModelRow[]> {
+    const rows = await this.callproc("spend_by_model", [start.toISOString(), end.toISOString()]);
+    return (rows ?? []).map((r) => {
+      const row = r as Record<string, unknown>;
+      return {
+        model: String(row.model ?? ""),
+        totalSpend: Number(row.total_spend ?? 0),
+        transactionCount: Number(row.transaction_count ?? 0),
+      };
+    });
+  }
+
+  async topUsers(limit: number, start: Date, end: Date): Promise<TopUserRow[]> {
+    const rows = await this.callproc("top_users", [limit, start.toISOString(), end.toISOString()]);
+    return (rows ?? []).map((r) => {
+      const row = r as Record<string, unknown>;
+      return {
+        userId: String(row.user_id ?? ""),
+        totalSpend: Number(row.total_spend ?? 0),
+      };
+    });
+  }
+
+  async dailySpend(start: Date, end: Date): Promise<DailySpendRow[]> {
+    const rows = await this.callproc("daily_spend", [start.toISOString(), end.toISOString()]);
+    return (rows ?? []).map((r) => {
+      const row = r as Record<string, unknown>;
+      return {
+        date: String(row.date ?? ""),
+        totalSpend: Number(row.total_spend ?? 0),
+        transactionCount: Number(row.transaction_count ?? 0),
+      };
+    });
   }
 
   // ── Credit expiry ────────────────────────────────────────────────────

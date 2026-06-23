@@ -5,12 +5,16 @@ import type {
   AddCreditsResult,
   BalanceResult,
   CreditMetadata,
+  DailySpendRow,
   DeductionResult,
   PricingConfigData,
   RefundResult,
   ReserveResult,
   SetupResult,
+  SpendByModelRow,
+  SpendByUserRow,
   SweepResult,
+  TopUserRow,
 } from "./types.js";
 import type { CreditStore } from "./stores/credit-store.js";
 import { loadConfigFromDict } from "./config.js";
@@ -222,5 +226,27 @@ export class CreditManager {
    */
   async sweepExpiredCredits(dryRun?: boolean): Promise<SweepResult> {
     return await this.store.sweepExpiredCredits(dryRun);
+  }
+
+  // ── Usage analytics ──────────────────────────────────────────────────
+
+  /** Aggregate spend by user in a time window. */
+  async spendByUser(start: Date, end: Date): Promise<SpendByUserRow[]> {
+    return await this.store.spendByUser(start, end);
+  }
+
+  /** Aggregate spend by model in a time window. */
+  async spendByModel(start: Date, end: Date): Promise<SpendByModelRow[]> {
+    return await this.store.spendByModel(start, end);
+  }
+
+  /** Top users by spend in a time window with limit. */
+  async topUsers(limit: number, start: Date, end: Date): Promise<TopUserRow[]> {
+    return await this.store.topUsers(limit, start, end);
+  }
+
+  /** Daily spend aggregation in a time window. */
+  async dailySpend(start: Date, end: Date): Promise<DailySpendRow[]> {
+    return await this.store.dailySpend(start, end);
   }
 }

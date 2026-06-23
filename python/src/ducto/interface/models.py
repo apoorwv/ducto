@@ -172,3 +172,37 @@ class SweepResult(BaseModel):
     expired_count: int = 0
     expired_amount: int = 0
     dry_run: bool = False
+
+
+# ── Usage analytics ──────────────────────────────────────────────────────
+
+
+class SpendByUserRow(BaseModel):
+    """Aggregated spend for a single user in a time window."""
+
+    user_id: str = ""
+    total_spend: int = 0
+    transaction_count: int = 0
+
+
+class SpendByModelRow(BaseModel):
+    """Aggregated spend for a single model in a time window."""
+
+    model: str = ""
+    total_spend: int = 0
+    transaction_count: int = 0
+
+
+class TopUserRow(BaseModel):
+    """Top-spending user in a time window."""
+
+    user_id: str = ""
+    total_spend: int = 0
+
+
+class DailySpendRow(BaseModel):
+    """Daily spend aggregation in a time window."""
+
+    date: str = ""
+    total_spend: int = 0
+    transaction_count: int = 0

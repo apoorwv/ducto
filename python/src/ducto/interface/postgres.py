@@ -15,6 +15,7 @@ from ducto.interface.models import (
     AllowanceResult,
     BalanceResult,
     CreditMetadata,
+    DailySpendRow,
     DeductionResult,
     GetUserPlanResult,
     PricingConfigData,
@@ -23,7 +24,10 @@ from ducto.interface.models import (
     ReserveResult,
     SetupResult,
     SetUserPlanResult,
+    SpendByModelRow,
+    SpendByUserRow,
     SweepResult,
+    TopUserRow,
 )
 from ducto.sql import _get_sql_files
 
@@ -366,6 +370,83 @@ class PostgresStore(CreditStore):
             amount=int(result_dict.get("amount", 0)),
             new_balance=int(result_dict.get("new_balance", 0)),
         )
+
+    # ── Usage analytics ─────────────────────────────────────────────────
+
+    def spend_by_user(self, start: datetime, end: datetime) -> list[SpendByUserRow]:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("spend_by_user", [start.isoformat(), end.isoformat()])
+                rows = cur.fetchall()
+            conn.commit()
+        finally:
+            conn.close()
+        return [
+            SpendByUserRow(
+                user_id=str(r[0].get("user_id", "")),
+                total_spend=int(r[0].get("total_spend", 0)),
+                transaction_count=int(r[0].get("transaction_count", 0)),
+            )
+            for r in (rows or [])
+            if r and isinstance(r[0], dict)
+        ]
+
+    def spend_by_model(self, start: datetime, end: datetime) -> list[SpendByModelRow]:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("spend_by_model", [start.isoformat(), end.isoformat()])
+                rows = cur.fetchall()
+            conn.commit()
+        finally:
+            conn.close()
+        return [
+            SpendByModelRow(
+                model=str(r[0].get("model", "")),
+                total_spend=int(r[0].get("total_spend", 0)),
+                transaction_count=int(r[0].get("transaction_count", 0)),
+            )
+            for r in (rows or [])
+            if r and isinstance(r[0], dict)
+        ]
+
+    def top_users(self, limit: int, start: datetime, end: datetime) -> list[TopUserRow]:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("top_users", [limit, start.isoformat(), end.isoformat()])
+                rows = cur.fetchall()
+            conn.commit()
+        finally:
+            conn.close()
+        return [
+            TopUserRow(
+                user_id=str(r[0].get("user_id", "")),
+                total_spend=int(r[0].get("total_spend", 0)),
+            )
+            for r in (rows or [])
+            if r and isinstance(r[0], dict)
+        ]
+
+    def daily_spend(self, start: datetime, end: datetime) -> list[DailySpendRow]:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("daily_spend", [start.isoformat(), end.isoformat()])
+                rows = cur.fetchall()
+            conn.commit()
+        finally:
+            conn.close()
+        return [
+            DailySpendRow(
+                date=str(r[0].get("date", "")),
+                total_spend=int(r[0].get("total_spend", 0)),
+                transaction_count=int(r[0].get("transaction_count", 0)),
+            )
+            for r in (rows or [])
+            if r and isinstance(r[0], dict)
+        ]
 
     # ── Credit expiry ───────────────────────────────────────────────────
 

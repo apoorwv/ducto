@@ -15,6 +15,7 @@ from ducto.interface.models import (
     AllowanceResult,
     BalanceResult,
     CreditMetadata,
+    DailySpendRow,
     DeductionResult,
     GetUserPlanResult,
     PricingConfigData,
@@ -23,7 +24,10 @@ from ducto.interface.models import (
     ReserveResult,
     SetupResult,
     SetUserPlanResult,
+    SpendByModelRow,
+    SpendByUserRow,
     SweepResult,
+    TopUserRow,
 )
 
 
@@ -184,5 +188,60 @@ class CreditStore(ABC):
 
         Returns:
             ``SweepResult`` with count and amount of expired credits.
+        """
+        ...
+
+    # ── Usage analytics ─────────────────────────────────────────────────
+
+    @abstractmethod
+    def spend_by_user(self, start: datetime, end: datetime) -> list[SpendByUserRow]:
+        """Aggregate spend by user in a time window.
+
+        Args:
+            start: Start of time window (inclusive).
+            end: End of time window (inclusive).
+
+        Returns:
+            List of ``SpendByUserRow`` with totals per user.
+        """
+        ...
+
+    @abstractmethod
+    def spend_by_model(self, start: datetime, end: datetime) -> list[SpendByModelRow]:
+        """Aggregate spend by model in a time window.
+
+        Args:
+            start: Start of time window (inclusive).
+            end: End of time window (inclusive).
+
+        Returns:
+            List of ``SpendByModelRow`` with totals per model.
+        """
+        ...
+
+    @abstractmethod
+    def top_users(self, limit: int, start: datetime, end: datetime) -> list[TopUserRow]:
+        """Top users by spend in a time window.
+
+        Args:
+            limit: Maximum number of users to return.
+            start: Start of time window (inclusive).
+            end: End of time window (inclusive).
+
+        Returns:
+            List of ``TopUserRow`` sorted by total_spend descending.
+        """
+        ...
+
+    @abstractmethod
+    def daily_spend(self, start: datetime, end: datetime) -> list[DailySpendRow]:
+        """Daily spend aggregation in a time window.
+
+        Args:
+            start: Start of time window (inclusive).
+            end: End of time window (inclusive).
+
+        Returns:
+            List of ``DailySpendRow`` with per-day totals.
         """
         ...

@@ -3,6 +3,7 @@ import type {
   AllowanceResult,
   BalanceResult,
   CreditMetadata,
+  DailySpendRow,
   DeductionResult,
   GetUserPlanResult,
   PricingConfigData,
@@ -11,7 +12,10 @@ import type {
   ReserveResult,
   SetUserPlanResult,
   SetupResult,
+  SpendByModelRow,
+  SpendByUserRow,
   SweepResult,
+  TopUserRow,
 } from "../types.js";
 import type { CreditStore } from "./credit-store.js";
 
@@ -48,6 +52,27 @@ export class HttpxSupabaseStore implements CreditStore {
       throw new Error(`Supabase RPC ${fn} failed (${resp.status}): ${text}`);
     }
     return resp.json() as Promise<Record<string, unknown>>;
+  }
+
+  private async rpcAll(
+    fn: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>[]> {
+    const resp = await fetch(`${this.url}/rest/v1/rpc/${fn}`, {
+      method: "POST",
+      headers: {
+        apikey: this.key,
+        authorization: `Bearer ${this.key}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(params),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`Supabase RPC ${fn} failed (${resp.status}): ${text}`);
+    }
+    const data = await resp.json();
+    return Array.isArray(data) ? data : [data];
   }
 
   async setup(_databaseUrl?: string | null): Promise<SetupResult> {
@@ -255,6 +280,56 @@ export class HttpxSupabaseStore implements CreditStore {
       amount: Number(row.amount ?? 0),
       newBalance: Number(row.new_balance ?? 0),
     };
+  }
+
+  // ── Usage analytics ──────────────────────────────────────────────────
+
+  async spendByUser(start: Date, end: Date): Promise<SpendByUserRow[]> {
+    const rows = await this.rpcAll("spend_by_user", {
+      p_start: start.toISOString(),
+      p_end: end.toISOString(),
+    });
+    return rows.map((row) => ({
+      userId: String(row.user_id ?? ""),
+      totalSpend: Number(row.total_spend ?? 0),
+      transactionCount: Number(row.transaction_count ?? 0),
+    }));
+  }
+
+  async spendByModel(start: Date, end: Date): Promise<SpendByModelRow[]> {
+    const rows = await this.rpcAll("spend_by_model", {
+      p_start: start.toISOString(),
+      p_end: end.toISOString(),
+    });
+    return rows.map((row) => ({
+      model: String(row.model ?? ""),
+      totalSpend: Number(row.total_spend ?? 0),
+      transactionCount: Number(row.transaction_count ?? 0),
+    }));
+  }
+
+  async topUsers(limit: number, start: Date, end: Date): Promise<TopUserRow[]> {
+    const rows = await this.rpcAll("top_users", {
+      p_limit: limit,
+      p_start: start.toISOString(),
+      p_end: end.toISOString(),
+    });
+    return rows.map((row) => ({
+      userId: String(row.user_id ?? ""),
+      totalSpend: Number(row.total_spend ?? 0),
+    }));
+  }
+
+  async dailySpend(start: Date, end: Date): Promise<DailySpendRow[]> {
+    const rows = await this.rpcAll("daily_spend", {
+      p_start: start.toISOString(),
+      p_end: end.toISOString(),
+    });
+    return rows.map((row) => ({
+      date: String(row.date ?? ""),
+      totalSpend: Number(row.total_spend ?? 0),
+      transactionCount: Number(row.transaction_count ?? 0),
+    }));
   }
 
   // ── Credit expiry ────────────────────────────────────────────────────

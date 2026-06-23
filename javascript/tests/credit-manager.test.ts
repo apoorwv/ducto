@@ -251,6 +251,63 @@ describe("CreditManager", () => {
     });
   });
 
+  describe("usage analytics", () => {
+    it("spendByUser delegates to store and returns results", async () => {
+      manager.publishPricingFromDict(TEST_CONFIG);
+      await manager.addCredits("user-1", 500);
+      await manager.deduct("user-1", { model: "gpt-4", inputTokens: 100 });
+
+      const now = new Date();
+      const rows = await manager.spendByUser(
+        new Date(now.getTime() - 1000),
+        new Date(now.getTime() + 1000),
+      );
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      expect(rows[0].userId).toBe("user-1");
+    });
+
+    it("spendByModel returns results through manager", async () => {
+      manager.publishPricingFromDict(TEST_CONFIG);
+      await manager.addCredits("user-1", 500);
+      await manager.deduct("user-1", { model: "gpt-4", inputTokens: 100 });
+
+      const now = new Date();
+      const rows = await manager.spendByModel(
+        new Date(now.getTime() - 1000),
+        new Date(now.getTime() + 1000),
+      );
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("topUsers returns top users through manager", async () => {
+      manager.publishPricingFromDict(TEST_CONFIG);
+      await manager.addCredits("user-1", 500);
+      await manager.deduct("user-1", { model: "gpt-4", inputTokens: 100 });
+
+      const now = new Date();
+      const rows = await manager.topUsers(
+        5,
+        new Date(now.getTime() - 1000),
+        new Date(now.getTime() + 1000),
+      );
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("dailySpend returns bucketed results through manager", async () => {
+      manager.publishPricingFromDict(TEST_CONFIG);
+      await manager.addCredits("user-1", 500);
+      await manager.deduct("user-1", { model: "gpt-4", inputTokens: 100 });
+
+      const now = new Date();
+      const rows = await manager.dailySpend(
+        new Date(now.getTime() - 86400000),
+        new Date(now.getTime() + 86400000),
+      );
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      expect(rows[0].totalSpend).toBeGreaterThan(0);
+    });
+  });
+
   describe("credit expiry", () => {
     it("sweepExpiredCredits delegates to store", async () => {
       manager.publishPricingFromDict(TEST_CONFIG);

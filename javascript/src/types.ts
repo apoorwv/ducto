@@ -125,3 +125,31 @@ export interface SweepResult {
   expiredAmount: number;
   dryRun: boolean;
 }
+
+// ── Usage analytics ─────────────────────────────────────────────────
+/** Aggregated spend for a single user in a time window. */
+export interface SpendByUserRow {
+  userId: string;
+  totalSpend: number;
+  transactionCount: number;
+}
+
+/** Aggregated spend for a single model in a time window. */
+export interface SpendByModelRow {
+  model: string;
+  totalSpend: number;
+  transactionCount: number;
+}
+
+/** Top-spending user in a time window. */
+export interface TopUserRow {
+  userId: string;
+  totalSpend: number;
+}
+
+/** Daily spend aggregation in a time window. */
+export interface DailySpendRow {
+  date: string;
+  totalSpend: number;
+  transactionCount: number;
+}

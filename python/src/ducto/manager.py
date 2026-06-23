@@ -37,12 +37,16 @@ from ducto.interface.models import (
     AddCreditsResult,
     BalanceResult,
     CreditMetadata,
+    DailySpendRow,
     DeductionResult,
     PricingConfigData,
     RefundResult,
     ReserveResult,
     SetupResult,
+    SpendByModelRow,
+    SpendByUserRow,
     SweepResult,
+    TopUserRow,
 )
 from ducto.metrics import UsageMetrics
 
@@ -283,6 +287,24 @@ class CreditManager:
             ``SweepResult`` with expired count and amount.
         """
         return self._store.sweep_expired_credits(dry_run)
+
+    # ── Usage analytics ─────────────────────────────────────────────────
+
+    def spend_by_user(self, start: datetime, end: datetime) -> list[SpendByUserRow]:
+        """Aggregate spend by user in a time window."""
+        return self._store.spend_by_user(start, end)
+
+    def spend_by_model(self, start: datetime, end: datetime) -> list[SpendByModelRow]:
+        """Aggregate spend by model in a time window."""
+        return self._store.spend_by_model(start, end)
+
+    def top_users(self, limit: int, start: datetime, end: datetime) -> list[TopUserRow]:
+        """Top users by spend in a time window."""
+        return self._store.top_users(limit, start, end)
+
+    def daily_spend(self, start: datetime, end: datetime) -> list[DailySpendRow]:
+        """Daily spend aggregation in a time window."""
+        return self._store.daily_spend(start, end)
 
     def deduct_fixed(
         self,

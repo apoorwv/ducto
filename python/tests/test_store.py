@@ -224,6 +224,98 @@ class TestRefund:
         assert refund.error == "transaction_not_found"
 
 
+# ── Usage analytics ───────────────────────────────────────────────────────────
+
+
+class TestUsageAnalytics:
+    def test_spend_by_user_returns_correct_totals(self) -> None:
+        store = MemoryStore()
+        store.add_credits("user_1", 1000)
+        store.add_credits("user_2", 2000)
+
+        r1 = store.reserve_credits("user_1", 100, "usage")
+        store.deduct_credits("user_1", r1.reservation_id, 100)
+        r2 = store.reserve_credits("user_1", 50, "usage")
+        store.deduct_credits("user_1", r2.reservation_id, 50)
+        r3 = store.reserve_credits("user_2", 200, "usage")
+        store.deduct_credits("user_2", r3.reservation_id, 200)
+
+        from datetime import timedelta
+
+        now = __import__("datetime").datetime.now()
+        rows = store.spend_by_user(now - timedelta(seconds=10), now + timedelta(seconds=10))
+
+        assert len(rows) == 2
+        u1 = next(r for r in rows if r.user_id == "user_1")
+        assert u1.total_spend == 150  # 100 + 50
+        assert u1.transaction_count == 2
+        u2 = next(r for r in rows if r.user_id == "user_2")
+        assert u2.total_spend == 200
+        assert u2.transaction_count == 1
+
+    def test_spend_by_model_returns_correct_totals(self) -> None:
+        store = MemoryStore()
+        store.add_credits("user_1", 1000)
+
+        from ducto.interface.models import CreditMetadata
+
+        r1 = store.reserve_credits("user_1", 100, "usage")
+        store.deduct_credits("user_1", r1.reservation_id, 100, metadata=CreditMetadata(model="gpt-4"))
+        r2 = store.reserve_credits("user_1", 50, "usage")
+        store.deduct_credits("user_1", r2.reservation_id, 50, metadata=CreditMetadata(model="claude-3"))
+
+        from datetime import timedelta
+
+        now = __import__("datetime").datetime.now()
+        rows = store.spend_by_model(now - timedelta(seconds=10), now + timedelta(seconds=10))
+        gpt4 = next((r for r in rows if r.model == "gpt-4"), None)
+        assert gpt4 is not None
+        assert gpt4.total_spend == 100
+
+    def test_empty_time_window_returns_empty(self) -> None:
+        store = MemoryStore()
+        store.add_credits("user_1", 100)
+        r = store.reserve_credits("user_1", 10, "usage")
+        store.deduct_credits("user_1", r.reservation_id, 10)
+
+        rows = store.spend_by_user(
+            __import__("datetime").datetime(2020, 1, 1),
+            __import__("datetime").datetime(2020, 1, 2),
+        )
+        assert len(rows) == 0
+
+    def test_top_users_respects_limit(self) -> None:
+        store = MemoryStore()
+        store.add_credits("user_1", 1000)
+        store.add_credits("user_2", 1000)
+        store.add_credits("user_3", 1000)
+
+        for uid, amt in [("user_1", 300), ("user_2", 200), ("user_3", 100)]:
+            r = store.reserve_credits(uid, amt, "usage")
+            store.deduct_credits(uid, r.reservation_id, amt)
+
+        from datetime import timedelta
+
+        now = __import__("datetime").datetime.now()
+        top = store.top_users(2, now - timedelta(seconds=10), now + timedelta(seconds=10))
+        assert len(top) == 2
+        assert top[0].total_spend >= top[1].total_spend
+
+    def test_daily_spend_bucketing_correct(self) -> None:
+        store = MemoryStore()
+        store.add_credits("user_1", 1000)
+        r = store.reserve_credits("user_1", 75, "usage")
+        store.deduct_credits("user_1", r.reservation_id, 75)
+
+        from datetime import timedelta
+
+        now = __import__("datetime").datetime.now()
+        rows = store.daily_spend(now - timedelta(days=1), now + timedelta(days=1))
+        assert len(rows) >= 1
+        assert rows[0].total_spend == 75
+        assert rows[0].transaction_count == 1
+
+
 def test_load_pricing_file_json(tmp_path) -> None:
     """Load a JSON pricing file via _load_pricing_file."""
     from ducto.__main__ import _load_pricing_file

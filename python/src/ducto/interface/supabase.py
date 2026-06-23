@@ -15,6 +15,7 @@ from ducto.interface.models import (
     AllowanceResult,
     BalanceResult,
     CreditMetadata,
+    DailySpendRow,
     DeductionResult,
     GetUserPlanResult,
     PricingConfigData,
@@ -23,7 +24,10 @@ from ducto.interface.models import (
     ReserveResult,
     SetupResult,
     SetUserPlanResult,
+    SpendByModelRow,
+    SpendByUserRow,
     SweepResult,
+    TopUserRow,
 )
 from ducto.sql import _get_sql_files
 
@@ -109,6 +113,21 @@ class HttpxSupabaseStore(CreditStore):
         )
         resp.raise_for_status()
         return resp.json()
+
+    def _rpc_list(self, fn: str, params: dict[str, object]) -> list[dict[str, Any]]:
+        """Call a Postgres RPC that returns multiple rows."""
+        resp = self._http.post(
+            f"{self._url}/rest/v1/rpc/{fn}",
+            json=params,
+            headers={
+                "apikey": self._key,
+                "authorization": f"Bearer {self._key}",
+                "content-type": "application/json",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return list(data) if isinstance(data, list) else [data]
 
     def get_balance(self, user_id: str) -> BalanceResult:
         row = self._rpc("get_credits_balance", {"p_user_id": user_id})
@@ -312,6 +331,76 @@ class HttpxSupabaseStore(CreditStore):
             amount=int(row.get("amount", 0)),
             new_balance=int(row.get("new_balance", 0)),
         )
+
+    # ── Usage analytics ─────────────────────────────────────────────────
+
+    def spend_by_user(self, start: datetime, end: datetime) -> list[SpendByUserRow]:
+        rows = self._rpc_list(
+            "spend_by_user",
+            {
+                "p_start": start.isoformat(),
+                "p_end": end.isoformat(),
+            },
+        )
+        return [
+            SpendByUserRow(
+                user_id=str(r.get("user_id", "")),
+                total_spend=int(r.get("total_spend", 0)),
+                transaction_count=int(r.get("transaction_count", 0)),
+            )
+            for r in rows
+        ]
+
+    def spend_by_model(self, start: datetime, end: datetime) -> list[SpendByModelRow]:
+        rows = self._rpc_list(
+            "spend_by_model",
+            {
+                "p_start": start.isoformat(),
+                "p_end": end.isoformat(),
+            },
+        )
+        return [
+            SpendByModelRow(
+                model=str(r.get("model", "")),
+                total_spend=int(r.get("total_spend", 0)),
+                transaction_count=int(r.get("transaction_count", 0)),
+            )
+            for r in rows
+        ]
+
+    def top_users(self, limit: int, start: datetime, end: datetime) -> list[TopUserRow]:
+        rows = self._rpc_list(
+            "top_users",
+            {
+                "p_limit": limit,
+                "p_start": start.isoformat(),
+                "p_end": end.isoformat(),
+            },
+        )
+        return [
+            TopUserRow(
+                user_id=str(r.get("user_id", "")),
+                total_spend=int(r.get("total_spend", 0)),
+            )
+            for r in rows
+        ]
+
+    def daily_spend(self, start: datetime, end: datetime) -> list[DailySpendRow]:
+        rows = self._rpc_list(
+            "daily_spend",
+            {
+                "p_start": start.isoformat(),
+                "p_end": end.isoformat(),
+            },
+        )
+        return [
+            DailySpendRow(
+                date=str(r.get("date", "")),
+                total_spend=int(r.get("total_spend", 0)),
+                transaction_count=int(r.get("transaction_count", 0)),
+            )
+            for r in rows
+        ]
 
     # ── Credit expiry ───────────────────────────────────────────────────
 

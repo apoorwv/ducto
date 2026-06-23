@@ -3,6 +3,7 @@ import type {
   AllowanceResult,
   BalanceResult,
   CreditMetadata,
+  DailySpendRow,
   DeductionResult,
   GetUserPlanResult,
   PricingConfigData,
@@ -11,7 +12,10 @@ import type {
   ReserveResult,
   SetUserPlanResult,
   SetupResult,
+  SpendByModelRow,
+  SpendByUserRow,
   SweepResult,
+  TopUserRow,
 } from "../types.js";
 
 /** Interface for credit storage backends. */
@@ -58,4 +62,10 @@ export interface CreditStore {
 
   // ── Credit expiry ────────────────────────────────────────────────────
   sweepExpiredCredits(dryRun?: boolean): Promise<SweepResult>;
+
+  // ── Usage analytics ──────────────────────────────────────────────────
+  spendByUser(start: Date, end: Date): Promise<SpendByUserRow[]>;
+  spendByModel(start: Date, end: Date): Promise<SpendByModelRow[]>;
+  topUsers(limit: number, start: Date, end: Date): Promise<TopUserRow[]>;
+  dailySpend(start: Date, end: Date): Promise<DailySpendRow[]>;
 }
