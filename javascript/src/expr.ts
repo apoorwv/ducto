@@ -1,16 +1,34 @@
 import { ExpressionError } from "./errors.js";
 
-const ALLOWED_FUNCTIONS = new Set(["ceil", "floor", "min", "max", "round"]);
+const ALLOWED_FUNCTIONS = new Set(["ceil", "floor", "min", "max", "round", "if", "tier", "clamp"]);
 
 // ── Tokenizer ──────────────────────────────────────────────────────────────
 
 type TokenType =
-  | "number" | "identifier"
-  | "+" | "-" | "*" | "/" | "//" | "%" | "**"
-  | "(" | ")" | ","
-  | "==" | "!=" | "<" | "<=" | ">" | ">=" | "in" | "not"
-  | "and" | "or"
-  | "if" | "else";
+  | "number"
+  | "identifier"
+  | "+"
+  | "-"
+  | "*"
+  | "/"
+  | "//"
+  | "%"
+  | "**"
+  | "("
+  | ")"
+  | ","
+  | "=="
+  | "!="
+  | "<"
+  | "<="
+  | ">"
+  | ">="
+  | "in"
+  | "not"
+  | "and"
+  | "or"
+  | "if"
+  | "else";
 
 interface Token {
   type: TokenType;
@@ -21,36 +39,106 @@ function tokenize(src: string): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   while (i < src.length) {
-    if (src[i] === " " || src[i] === "\t" || src[i] === "\n") { i++; continue; }
-    if (src[i] === "(") { tokens.push({ type: "(", value: "(" }); i++; continue; }
-    if (src[i] === ")") { tokens.push({ type: ")", value: ")" }); i++; continue; }
-    if (src[i] === ",") { tokens.push({ type: ",", value: "," }); i++; continue; }
+    if (src[i] === " " || src[i] === "\t" || src[i] === "\n") {
+      i++;
+      continue;
+    }
+    if (src[i] === "(") {
+      tokens.push({ type: "(", value: "(" });
+      i++;
+      continue;
+    }
+    if (src[i] === ")") {
+      tokens.push({ type: ")", value: ")" });
+      i++;
+      continue;
+    }
+    if (src[i] === ",") {
+      tokens.push({ type: ",", value: "," });
+      i++;
+      continue;
+    }
 
     // Two-char operators
     const two = src.slice(i, i + 2);
-    if (two === "**") { tokens.push({ type: "**", value: "**" }); i += 2; continue; }
-    if (two === "//") { tokens.push({ type: "//", value: "//" }); i += 2; continue; }
-    if (two === "==") { tokens.push({ type: "==", value: "==" }); i += 2; continue; }
-    if (two === "!=") { tokens.push({ type: "!=", value: "!=" }); i += 2; continue; }
-    if (two === "<=") { tokens.push({ type: "<=", value: "<=" }); i += 2; continue; }
-    if (two === ">=") { tokens.push({ type: ">=", value: ">=" }); i += 2; continue; }
+    if (two === "**") {
+      tokens.push({ type: "**", value: "**" });
+      i += 2;
+      continue;
+    }
+    if (two === "//") {
+      tokens.push({ type: "//", value: "//" });
+      i += 2;
+      continue;
+    }
+    if (two === "==") {
+      tokens.push({ type: "==", value: "==" });
+      i += 2;
+      continue;
+    }
+    if (two === "!=") {
+      tokens.push({ type: "!=", value: "!=" });
+      i += 2;
+      continue;
+    }
+    if (two === "<=") {
+      tokens.push({ type: "<=", value: "<=" });
+      i += 2;
+      continue;
+    }
+    if (two === ">=") {
+      tokens.push({ type: ">=", value: ">=" });
+      i += 2;
+      continue;
+    }
 
     // "not in" needs special handling — we tokenize "not" and then "in" separately
     // The parser will handle "not" + "in" as "not in"
 
     // One-char operators
-    if (src[i] === "+") { tokens.push({ type: "+", value: "+" }); i++; continue; }
-    if (src[i] === "-") { tokens.push({ type: "-", value: "-" }); i++; continue; }
-    if (src[i] === "*") { tokens.push({ type: "*", value: "*" }); i++; continue; }
-    if (src[i] === "/") { tokens.push({ type: "/", value: "/" }); i++; continue; }
-    if (src[i] === "%") { tokens.push({ type: "%", value: "%" }); i++; continue; }
-    if (src[i] === "<") { tokens.push({ type: "<", value: "<" }); i++; continue; }
-    if (src[i] === ">") { tokens.push({ type: ">", value: ">" }); i++; continue; }
+    if (src[i] === "+") {
+      tokens.push({ type: "+", value: "+" });
+      i++;
+      continue;
+    }
+    if (src[i] === "-") {
+      tokens.push({ type: "-", value: "-" });
+      i++;
+      continue;
+    }
+    if (src[i] === "*") {
+      tokens.push({ type: "*", value: "*" });
+      i++;
+      continue;
+    }
+    if (src[i] === "/") {
+      tokens.push({ type: "/", value: "/" });
+      i++;
+      continue;
+    }
+    if (src[i] === "%") {
+      tokens.push({ type: "%", value: "%" });
+      i++;
+      continue;
+    }
+    if (src[i] === "<") {
+      tokens.push({ type: "<", value: "<" });
+      i++;
+      continue;
+    }
+    if (src[i] === ">") {
+      tokens.push({ type: ">", value: ">" });
+      i++;
+      continue;
+    }
 
     // Numbers
     if (/[0-9]/.test(src[i])) {
       let num = "";
-      while (i < src.length && (/[0-9.]/.test(src[i]))) { num += src[i]; i++; }
+      while (i < src.length && /[0-9.]/.test(src[i])) {
+        num += src[i];
+        i++;
+      }
       tokens.push({ type: "number", value: num });
       continue;
     }
@@ -58,17 +146,28 @@ function tokenize(src: string): Token[] {
     // Identifiers and keywords
     if (/[a-zA-Z_]/.test(src[i])) {
       let word = "";
-      while (i < src.length && /[a-zA-Z0-9_]/.test(src[i])) { word += src[i]; i++; }
+      while (i < src.length && /[a-zA-Z0-9_]/.test(src[i])) {
+        word += src[i];
+        i++;
+      }
       const kw: TokenType =
-        word === "and" ? "and" :
-        word === "or" ? "or" :
-        word === "if" ? "if" :
-        word === "else" ? "else" :
-        word === "in" ? "in" :
-        word === "not" ? "not" :
-        word === "true" ? "number" :
-        word === "false" ? "number" :
-        "identifier";
+        word === "and"
+          ? "and"
+          : word === "or"
+            ? "or"
+            : word === "if"
+              ? "if"
+              : word === "else"
+                ? "else"
+                : word === "in"
+                  ? "in"
+                  : word === "not"
+                    ? "not"
+                    : word === "true"
+                      ? "number"
+                      : word === "false"
+                        ? "number"
+                        : "identifier";
       tokens.push({
         type: kw,
         value: word === "true" ? "1" : word === "false" ? "0" : word,
@@ -83,16 +182,58 @@ function tokenize(src: string): Token[] {
 
 // ── AST nodes ──────────────────────────────────────────────────────────────
 
-export interface NumNode { type: "number"; value: number; }
-export interface IdentNode { type: "identifier"; name: string; }
-export interface BinOpNode { type: "binary"; op: string; left: Node; right: Node; }
-export interface UnaryNode { type: "unary"; op: string; operand: Node; }
-export interface CallNode { type: "call"; name: string; args: Node[]; }
-export interface TernaryNode { type: "ternary"; cond: Node; then: Node; else: Node; }
-export interface CompareNode { type: "comparison"; op: string; left: Node; right: Node; }
-export interface BoolOpNode { type: "boolean"; op: string; left: Node; right: Node; }
+export interface NumNode {
+  type: "number";
+  value: number;
+}
+export interface IdentNode {
+  type: "identifier";
+  name: string;
+}
+export interface BinOpNode {
+  type: "binary";
+  op: string;
+  left: Node;
+  right: Node;
+}
+export interface UnaryNode {
+  type: "unary";
+  op: string;
+  operand: Node;
+}
+export interface CallNode {
+  type: "call";
+  name: string;
+  args: Node[];
+}
+export interface TernaryNode {
+  type: "ternary";
+  cond: Node;
+  then: Node;
+  else: Node;
+}
+export interface CompareNode {
+  type: "comparison";
+  op: string;
+  left: Node;
+  right: Node;
+}
+export interface BoolOpNode {
+  type: "boolean";
+  op: string;
+  left: Node;
+  right: Node;
+}
 
-export type Node = NumNode | IdentNode | BinOpNode | UnaryNode | CallNode | TernaryNode | CompareNode | BoolOpNode;
+export type Node =
+  | NumNode
+  | IdentNode
+  | BinOpNode
+  | UnaryNode
+  | CallNode
+  | TernaryNode
+  | CompareNode
+  | BoolOpNode;
 
 // ── Parser ─────────────────────────────────────────────────────────────────
 
@@ -104,9 +245,15 @@ class Parser {
     this.tokens = tokens;
   }
 
-  peek(): Token | undefined { return this.tokens[this.pos]; }
-  private previous(): Token { return this.tokens[this.pos - 1]; }
-  isAtEnd(): boolean { return this.pos >= this.tokens.length; }
+  peek(): Token | undefined {
+    return this.tokens[this.pos];
+  }
+  private previous(): Token {
+    return this.tokens[this.pos - 1];
+  }
+  isAtEnd(): boolean {
+    return this.pos >= this.tokens.length;
+  }
 
   private check(...types: TokenType[]): boolean {
     if (this.isAtEnd()) return false;
@@ -115,7 +262,10 @@ class Parser {
 
   private match(...types: TokenType[]): boolean {
     for (const t of types) {
-      if (this.check(t)) { this.pos++; return true; }
+      if (this.check(t)) {
+        this.pos++;
+        return true;
+      }
     }
     return false;
   }
@@ -126,7 +276,7 @@ class Parser {
   }
 
   parse(): Node {
-    let expr = this.boolExpr();
+    const expr = this.boolExpr();
 
     // Handle ternary: X if cond else Y (at top level so operators bind correctly)
     if (this.match("if")) {
@@ -137,16 +287,6 @@ class Parser {
     }
 
     return expr;
-  }
-
-  private boolExpr(): Node {
-    let left = this.comparison();
-    while (this.match("and", "or")) {
-      const op = this.previous().value;
-      const right = this.comparison();
-      left = { type: "boolean", op, left, right } as BoolOpNode;
-    }
-    return left;
   }
 
   private comparison(): Node {
@@ -184,6 +324,24 @@ class Parser {
     return left;
   }
 
+  private notExpr(): Node {
+    if (this.match("not")) {
+      const operand = this.notExpr();
+      return { type: "unary", op: "not", operand } as UnaryNode;
+    }
+    return this.comparison();
+  }
+
+  private boolExpr(): Node {
+    let left = this.notExpr();
+    while (this.match("and", "or")) {
+      const op = this.previous().value;
+      const right = this.notExpr();
+      left = { type: "boolean", op, left, right } as BoolOpNode;
+    }
+    return left;
+  }
+
   private unary(): Node {
     if (this.match("+", "-")) {
       const op = this.previous().value;
@@ -206,7 +364,9 @@ class Parser {
       if (this.match("(")) {
         const args: Node[] = [];
         if (!this.check(")")) {
-          do { args.push(this.boolExpr()); } while (this.match(","));
+          do {
+            args.push(this.boolExpr());
+          } while (this.match(","));
         }
         this.consume(")", "expected ')'");
         if (!ALLOWED_FUNCTIONS.has(name)) {
@@ -215,6 +375,17 @@ class Parser {
         return { type: "call", name, args } as CallNode;
       }
       return { type: "identifier", name } as IdentNode;
+    }
+    // if(cond, then, else) — disambiguate from ternary by checking for '('
+    if (this.match("if") && this.match("(")) {
+      const args: Node[] = [];
+      if (!this.check(")")) {
+        do {
+          args.push(this.boolExpr());
+        } while (this.match(","));
+      }
+      this.consume(")", "expected ')'");
+      return { type: "call", name: "if", args } as CallNode;
     }
     if (this.match("(")) {
       const expr = this.parse();
@@ -243,14 +414,21 @@ function validateVariables(node: Node): void {
 
 function children(n: Node): Node[] {
   switch (n.type) {
-    case "binary": return [n.left, n.right];
-    case "unary": return [n.operand];
-    case "call": return n.args;
-    case "ternary": return [n.cond, n.then, n.else];
-    case "comparison": return [n.left, n.right];
-    case "boolean": return [n.left, n.right];
+    case "binary":
+      return [n.left, n.right];
+    case "unary":
+      return [n.operand];
+    case "call":
+      return n.args;
+    case "ternary":
+      return [n.cond, n.then, n.else];
+    case "comparison":
+      return [n.left, n.right];
+    case "boolean":
+      return [n.left, n.right];
     case "number":
-    case "identifier": return [];
+    case "identifier":
+      return [];
   }
 }
 
@@ -273,10 +451,7 @@ export function validateExpression(expr: string): void {
 }
 
 /** Safely evaluate a validated expression. */
-export function evaluateExpression(
-  expr: string,
-  variables: Record<string, number>,
-): number {
+export function evaluateExpression(expr: string, variables: Record<string, number>): number {
   if (!variables || typeof variables !== "object") {
     throw new ExpressionError("variables must be a dict");
   }
@@ -319,6 +494,7 @@ function evaluateNode(node: Node, vars: Record<string, number>): number {
 
     case "unary": {
       const v = evaluateNode(node.operand, vars);
+      if (node.op === "not") return v ? 0 : 1;
       return node.op === "-" ? -v : v;
     }
 
@@ -326,26 +502,51 @@ function evaluateNode(node: Node, vars: Record<string, number>): number {
       const l = evaluateNode(node.left, vars);
       const r = evaluateNode(node.right, vars);
       switch (node.op) {
-        case "+": return l + r;
-        case "-": return l - r;
-        case "*": return l * r;
-        case "/": return r === 0 ? Infinity : l / r;
-        case "//": return r === 0 ? Infinity : Math.floor(l / r);
-        case "%": return r === 0 ? NaN : l % r;
-        case "**": return Math.pow(l, r);
-        default: throw new ExpressionError(`unknown operator: ${node.op}`);
+        case "+":
+          return l + r;
+        case "-":
+          return l - r;
+        case "*":
+          return l * r;
+        case "/":
+          return r === 0 ? Infinity : l / r;
+        case "//":
+          return r === 0 ? Infinity : Math.floor(l / r);
+        case "%":
+          return r === 0 ? NaN : l % r;
+        case "**":
+          return Math.pow(l, r);
+        default:
+          throw new ExpressionError(`unknown operator: ${node.op}`);
       }
     }
 
     case "call": {
       const args = node.args.map((a) => evaluateNode(a, vars));
       switch (node.name) {
-        case "ceil": return Math.ceil(args[0]);
-        case "floor": return Math.floor(args[0]);
-        case "min": return Math.min(...args);
-        case "max": return Math.max(...args);
-        case "round": return Math.round(args[0]);
-        default: throw new ExpressionError(`disallowed function: ${node.name}`);
+        case "ceil":
+          return Math.ceil(args[0]);
+        case "floor":
+          return Math.floor(args[0]);
+        case "min":
+          return Math.min(...args);
+        case "max":
+          return Math.max(...args);
+        case "round":
+          return Math.round(args[0]);
+        case "if":
+          return args[0] ? args[1] : args[2];
+        case "tier": {
+          const val = args[0];
+          for (let i = 1; i < args.length - 1; i += 2) {
+            if (val < args[i]) return args[i + 1];
+          }
+          return args[args.length - 1]; // default
+        }
+        case "clamp":
+          return Math.max(args[1], Math.min(args[0], args[2]));
+        default:
+          throw new ExpressionError(`disallowed function: ${node.name}`);
       }
     }
 
@@ -358,15 +559,24 @@ function evaluateNode(node: Node, vars: Record<string, number>): number {
       const l = evaluateNode(node.left, vars);
       const r = evaluateNode(node.right, vars);
       switch (node.op) {
-        case "==": return l === r ? 1 : 0;
-        case "!=": return l !== r ? 1 : 0;
-        case "<": return l < r ? 1 : 0;
-        case "<=": return l <= r ? 1 : 0;
-        case ">": return l > r ? 1 : 0;
-        case ">=": return l >= r ? 1 : 0;
-        case "in": return String(l).includes(String(r)) ? 1 : 0;
-        case "not in": return String(l).includes(String(r)) ? 0 : 1;
-        default: throw new ExpressionError(`unknown comparison: ${node.op}`);
+        case "==":
+          return l === r ? 1 : 0;
+        case "!=":
+          return l !== r ? 1 : 0;
+        case "<":
+          return l < r ? 1 : 0;
+        case "<=":
+          return l <= r ? 1 : 0;
+        case ">":
+          return l > r ? 1 : 0;
+        case ">=":
+          return l >= r ? 1 : 0;
+        case "in":
+          return String(l).includes(String(r)) ? 1 : 0;
+        case "not in":
+          return String(l).includes(String(r)) ? 0 : 1;
+        default:
+          throw new ExpressionError(`unknown comparison: ${node.op}`);
       }
     }
 
@@ -374,9 +584,12 @@ function evaluateNode(node: Node, vars: Record<string, number>): number {
       const l = evaluateNode(node.left, vars);
       const r = evaluateNode(node.right, vars);
       switch (node.op) {
-        case "and": return l && r ? 1 : 0;
-        case "or": return l || r ? 1 : 0;
-        default: throw new ExpressionError(`unknown boolean op: ${node.op}`);
+        case "and":
+          return l && r ? 1 : 0;
+        case "or":
+          return l || r ? 1 : 0;
+        default:
+          throw new ExpressionError(`unknown boolean op: ${node.op}`);
       }
     }
   }

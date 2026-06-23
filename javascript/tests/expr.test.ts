@@ -16,11 +16,15 @@ describe("validateExpression", () => {
   });
 
   it("accepts ternary expressions (X if cond else Y)", () => {
-    expect(() => validateExpression("output_tokens * 0.5 if output_tokens > 1000 else output_tokens * 0.3")).not.toThrow();
+    expect(() =>
+      validateExpression("output_tokens * 0.5 if output_tokens > 1000 else output_tokens * 0.3"),
+    ).not.toThrow();
   });
 
   it("accepts boolean operators", () => {
-    expect(() => validateExpression("5 if (tool_calls > 0 and tool_calls <= 10) else 10")).not.toThrow();
+    expect(() =>
+      validateExpression("5 if (tool_calls > 0 and tool_calls <= 10) else 10"),
+    ).not.toThrow();
   });
 
   it("rejects disallowed function", () => {
@@ -30,6 +34,28 @@ describe("validateExpression", () => {
   it("rejects expression with no variables", () => {
     expect(() => validateExpression("42")).toThrow(ExpressionError);
     expect(() => validateExpression("2 + 2")).toThrow(ExpressionError);
+  });
+
+  it("accepts if function call", () => {
+    expect(() =>
+      validateExpression("if(input_tokens > 1000, input_tokens * 0.5, input_tokens * 0.3)"),
+    ).not.toThrow();
+  });
+
+  it("accepts tier function", () => {
+    expect(() => validateExpression("tier(tool_calls, 0, 0, 10, 5, 100, 10)")).not.toThrow();
+  });
+
+  it("accepts clamp function", () => {
+    expect(() => validateExpression("clamp(tool_calls, 0, 100)")).not.toThrow();
+  });
+
+  it("accepts not prefix in comparison", () => {
+    expect(() => validateExpression("5 if not (tool_calls > 10) else 10")).not.toThrow();
+  });
+
+  it("accepts standalone not prefix", () => {
+    expect(() => validateExpression("not (tool_calls > 10)")).not.toThrow();
   });
 
   it("rejects syntax errors", () => {
@@ -62,7 +88,12 @@ describe("evaluateExpression", () => {
   });
 
   it("evaluates min function", () => {
-    expect(evaluateExpression("min(input_tokens, output_tokens) * 0.5", { input_tokens: 100, output_tokens: 200 })).toBe(50);
+    expect(
+      evaluateExpression("min(input_tokens, output_tokens) * 0.5", {
+        input_tokens: 100,
+        output_tokens: 200,
+      }),
+    ).toBe(50);
   });
 
   it("evaluates max function", () => {
@@ -74,22 +105,43 @@ describe("evaluateExpression", () => {
   });
 
   it("evaluates ternary (greater than)", () => {
-    expect(evaluateExpression("output_tokens * 0.5 if output_tokens > 1000 else output_tokens * 0.3", { output_tokens: 2000 })).toBe(1000);
-    expect(evaluateExpression("output_tokens * 0.5 if output_tokens > 1000 else output_tokens * 0.3", { output_tokens: 500 })).toBe(150);
+    expect(
+      evaluateExpression("output_tokens * 0.5 if output_tokens > 1000 else output_tokens * 0.3", {
+        output_tokens: 2000,
+      }),
+    ).toBe(1000);
+    expect(
+      evaluateExpression("output_tokens * 0.5 if output_tokens > 1000 else output_tokens * 0.3", {
+        output_tokens: 500,
+      }),
+    ).toBe(150);
   });
 
   it("evaluates comparisons", () => {
-    expect(evaluateExpression("0 if tool_calls == 0 else tool_calls * 2", { tool_calls: 0 })).toBe(0);
-    expect(evaluateExpression("0 if tool_calls == 0 else tool_calls * 2", { tool_calls: 5 })).toBe(10);
+    expect(evaluateExpression("0 if tool_calls == 0 else tool_calls * 2", { tool_calls: 0 })).toBe(
+      0,
+    );
+    expect(evaluateExpression("0 if tool_calls == 0 else tool_calls * 2", { tool_calls: 5 })).toBe(
+      10,
+    );
   });
 
   it("evaluates boolean and", () => {
-    expect(evaluateExpression("5 if (tool_calls > 0 and tool_calls <= 10) else 10", { tool_calls: 5 })).toBe(5);
-    expect(evaluateExpression("5 if (tool_calls > 0 and tool_calls <= 10) else 10", { tool_calls: 15 })).toBe(10);
+    expect(
+      evaluateExpression("5 if (tool_calls > 0 and tool_calls <= 10) else 10", { tool_calls: 5 }),
+    ).toBe(5);
+    expect(
+      evaluateExpression("5 if (tool_calls > 0 and tool_calls <= 10) else 10", { tool_calls: 15 }),
+    ).toBe(10);
   });
 
   it("evaluates boolean or", () => {
-    expect(evaluateExpression("20 if (tool_calls > 10 or input_tokens > 1000) else 10", { tool_calls: 5, input_tokens: 2000 })).toBe(20);
+    expect(
+      evaluateExpression("20 if (tool_calls > 10 or input_tokens > 1000) else 10", {
+        tool_calls: 5,
+        input_tokens: 2000,
+      }),
+    ).toBe(20);
   });
 
   it("handles division by zero", () => {
@@ -113,6 +165,52 @@ describe("evaluateExpression", () => {
   });
 
   it("rejects undefined variable", () => {
-    expect(() => evaluateExpression("undefined_var * 2", { input_tokens: 100 })).toThrow(ExpressionError);
+    expect(() => evaluateExpression("undefined_var * 2", { input_tokens: 100 })).toThrow(
+      ExpressionError,
+    );
+  });
+
+  it("evaluates if() function — truthy condition returns then branch", () => {
+    expect(
+      evaluateExpression("if(tool_calls > 10, tool_calls * 5, tool_calls * 2)", { tool_calls: 20 }),
+    ).toBe(100);
+  });
+
+  it("evaluates if() function — falsy condition returns else branch", () => {
+    expect(
+      evaluateExpression("if(tool_calls > 10, tool_calls * 5, tool_calls * 2)", { tool_calls: 5 }),
+    ).toBe(10);
+  });
+
+  it("evaluates tier function", () => {
+    // tier(val, t1, r1, t2, r2, default): val<t1→r1, val<t2→r2, else→default
+    // 0→<10→5, default=5 (last arg used as r2 + default when only 2 thresholds)
+    expect(evaluateExpression("tier(tool_calls, 0, 0, 10, 5)", { tool_calls: -1 })).toBe(0); // -1 < 0 → r1
+    expect(evaluateExpression("tier(tool_calls, 0, 0, 10, 5)", { tool_calls: 5 })).toBe(5); // 5 < 10 → r2
+    expect(evaluateExpression("tier(tool_calls, 0, 0, 10, 5)", { tool_calls: 15 })).toBe(5); // else → default
+  });
+
+  it("evaluates tier with default branch", () => {
+    expect(
+      evaluateExpression("tier(input_tokens, 0, 0, 10, 5, 100, 10)", { input_tokens: 50 }),
+    ).toBe(10);
+  });
+
+  it("evaluates clamp function", () => {
+    expect(evaluateExpression("clamp(input_tokens, 0, 100)", { input_tokens: 50 })).toBe(50);
+    expect(evaluateExpression("clamp(input_tokens, 0, 100)", { input_tokens: -10 })).toBe(0);
+    expect(evaluateExpression("clamp(input_tokens, 0, 100)", { input_tokens: 200 })).toBe(100);
+  });
+
+  it("evaluates not prefix", () => {
+    // not (tool_calls > 10) — tool_calls=5 → 5>10 is false(0), not 0 → 1
+    expect(evaluateExpression("5 if not (tool_calls > 10) else 10", { tool_calls: 5 })).toBe(5);
+    // tool_calls=15 → 15>10 is true(1), not 1 → 0
+    expect(evaluateExpression("5 if not (tool_calls > 10) else 10", { tool_calls: 15 })).toBe(10);
+  });
+
+  it("evaluates double negation", () => {
+    expect(evaluateExpression("0 if not not (tool_calls > 0) else 5", { tool_calls: 10 })).toBe(0);
+    expect(evaluateExpression("0 if not not (tool_calls > 0) else 5", { tool_calls: 0 })).toBe(5);
   });
 });

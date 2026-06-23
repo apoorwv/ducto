@@ -35,6 +35,19 @@ class TestValidateExpression:
         with pytest.raises(ExpressionError, match="disallowed node"):
             validate_expression("x.__class__")
 
+    def test_if_function(self) -> None:
+        validate_expression("if(x > 0, x, 0)")
+
+    def test_tier_function(self) -> None:
+        validate_expression("tier(x, 0, 0, 10, 5)")
+
+    def test_clamp_function(self) -> None:
+        validate_expression("clamp(x, 0, 100)")
+
+    def test_not_prefix(self) -> None:
+        validate_expression("not (x > 0)")
+        validate_expression("x if not (x > 0) else 0")
+
 
 class TestEvaluateExpression:
     def test_simple_multiplication(self) -> None:
@@ -86,3 +99,41 @@ class TestEvaluateExpression:
     def test_division_by_zero_returns_inf(self) -> None:
         result = evaluate_expression("x / y", {"x": 5, "y": 0})
         assert math.isinf(result)
+
+    def test_if_function(self) -> None:
+        result = evaluate_expression("if(x > 10, x * 5, x * 2)", {"x": 20})
+        assert result == 100.0
+        result = evaluate_expression("if(x > 10, x * 5, x * 2)", {"x": 5})
+        assert result == 10.0
+
+    def test_tier_function(self) -> None:
+        result = evaluate_expression("tier(x, 0, 0, 10, 5)", {"x": -1})
+        assert result == 0.0
+        result = evaluate_expression("tier(x, 0, 0, 10, 5)", {"x": 5})
+        assert result == 5.0
+        result = evaluate_expression("tier(x, 0, 0, 10, 5)", {"x": 15})
+        assert result == 5.0
+
+    def test_tier_with_default(self) -> None:
+        result = evaluate_expression("tier(x, 0, 0, 10, 5, 100, 10)", {"x": 50})
+        assert result == 10.0
+
+    def test_clamp_function(self) -> None:
+        result = evaluate_expression("clamp(x, 0, 100)", {"x": 50})
+        assert result == 50.0
+        result = evaluate_expression("clamp(x, 0, 100)", {"x": -10})
+        assert result == 0.0
+        result = evaluate_expression("clamp(x, 0, 100)", {"x": 200})
+        assert result == 100.0
+
+    def test_not_prefix(self) -> None:
+        result = evaluate_expression("5 if not (x > 10) else 10", {"x": 5})
+        assert result == 5.0
+        result = evaluate_expression("5 if not (x > 10) else 10", {"x": 15})
+        assert result == 10.0
+
+    def test_in_operator_str(self) -> None:
+        result = evaluate_expression('"hello" in x', {"x": 2.0})
+        assert result == 0.0
+        result = evaluate_expression('"2" in x', {"x": 2.0})
+        assert result == 1.0

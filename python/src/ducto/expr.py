@@ -9,7 +9,7 @@ import builtins
 import math
 from typing import Any
 
-ALLOWED_FUNCTIONS = {"ceil", "floor", "min", "max", "round"}
+ALLOWED_FUNCTIONS = {"ceil", "floor", "min", "max", "round", "if", "tier", "clamp", "_ducto_if"}
 ALLOWED_NODES = frozenset(
     {
         ast.Module,
@@ -24,6 +24,7 @@ ALLOWED_NODES = frozenset(
         ast.FloorDiv,
         ast.Mod,
         ast.Pow,
+        ast.Not,
         ast.USub,
         ast.UAdd,
         ast.Constant,
@@ -69,6 +70,32 @@ def _validate_ast(node: ast.AST) -> None:
 MATH_FUNCTIONS = {"ceil", "floor"}
 BUILTIN_FUNCTIONS = {"min", "max", "round"}
 
+# Custom whitelisted functions for expression evaluation
+
+
+def _if(cond: Any, then_val: Any, else_val: Any) -> Any:
+    return then_val if cond else else_val
+
+
+def _tier(val: float, *thresholds: float) -> float:
+    """Tiered pricing: tier(val, t1, r1, t2, r2, ..., default).
+    Returns r_i for first threshold where val < t_i, else default.
+    """
+    for i in range(0, len(thresholds) - 1, 2):
+        if val < thresholds[i]:
+            return thresholds[i + 1]
+    return thresholds[-1]
+
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(x, hi))
+
+
+CUSTOM_FUNCTIONS = {"_ducto_if": _if, "tier": _tier, "clamp": _clamp}
+
+# Names exempt from variable checks (functions + eval utilities)
+_SAFE_NAMES: set[str] = ALLOWED_FUNCTIONS | {"str"}
+
 
 def _build_namespace(variables: dict[str, float | int]) -> dict[str, Any]:
     """Build allowed namespace for expression evaluation."""
@@ -77,8 +104,47 @@ def _build_namespace(variables: dict[str, float | int]) -> dict[str, Any]:
         ns[name] = getattr(math, name)
     for name in BUILTIN_FUNCTIONS:
         ns[name] = getattr(builtins, name)
+    ns.update(CUSTOM_FUNCTIONS)
+    ns["str"] = builtins.str
     ns.update(variables)
     return ns
+
+
+def _fix_in_operator(tree: ast.AST) -> ast.AST:
+    """Wrap In/NotIn operands in str() so numbers work at runtime.
+    JS evaluates 'in' as String(l).includes(String(r)).
+    Python ast.In errors on number containers.
+    """
+
+    class InTransformer(ast.NodeTransformer):
+        def visit_Compare(self, node: ast.Compare) -> ast.Compare:
+            self.generic_visit(node)
+            new_ops: list[ast.cmpop] = []
+            new_comparators: list[ast.expr] = []
+            for op, comparator in zip(node.ops, node.comparators, strict=True):
+                if isinstance(op, (ast.In, ast.NotIn)):
+                    lineno = getattr(comparator, "lineno", 0)
+                    col_offset = getattr(comparator, "col_offset", 0)
+                    comparator = ast.Call(
+                        func=ast.Name(id="str", ctx=ast.Load(), lineno=lineno, col_offset=col_offset),
+                        args=[comparator],
+                        keywords=[],
+                        lineno=lineno,
+                        col_offset=col_offset,
+                    )
+                new_ops.append(op)
+                new_comparators.append(comparator)
+            return ast.Compare(
+                left=node.left,
+                ops=new_ops,
+                comparators=new_comparators,
+                lineno=node.lineno,
+                col_offset=node.col_offset,
+                end_lineno=node.end_lineno,
+                end_col_offset=node.end_col_offset,
+            )
+
+    return InTransformer().visit(tree)  # type: ignore[return-value, union-attr]
 
 
 def validate_expression(expr: str) -> None:
@@ -91,8 +157,16 @@ def validate_expression(expr: str) -> None:
         ExpressionError: If the expression contains disallowed constructs.
 
     """
+    _validate_expression_tree(expr)
+
+
+def _validate_expression_tree(expr: str) -> ast.Expression:
+    """Parse and validate an expression string, returning the AST."""
     try:
-        tree = ast.parse(expr, mode="eval")
+        # Pre-process: 'if' is a Python keyword, rewrite to _ducto_if for parsing
+        # This is safe because raw 'if' inside strings won't match the pattern
+        processed = expr.replace("if(", "_ducto_if(")
+        tree = ast.parse(processed, mode="eval")
     except SyntaxError as e:
         raise ExpressionError(f"syntax error: {e}") from e
 
@@ -101,11 +175,13 @@ def validate_expression(expr: str) -> None:
     # Check that all referenced variables exist
     variables_seen: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id not in ALLOWED_FUNCTIONS:
+        if isinstance(node, ast.Name) and node.id not in _SAFE_NAMES:
             variables_seen.add(node.id)
 
     if not variables_seen:
         raise ExpressionError("expression references no variables -- must use at least one metric")
+
+    return tree
 
 
 def evaluate_expression(expr: str, variables: dict[str, float | int]) -> float:
@@ -128,16 +204,15 @@ def evaluate_expression(expr: str, variables: dict[str, float | int]) -> float:
     if not isinstance(variables, dict):
         raise ExpressionError("variables must be a dict")
 
-    try:
-        tree = ast.parse(expr, mode="eval")
-    except SyntaxError as e:
-        raise ExpressionError(f"syntax error: {e}") from e
+    tree = _validate_expression_tree(expr)
 
-    _validate_ast(tree)
+    # Fix In/NotIn operators to str() both sides (match JS String.includes behavior)
+    tree = _fix_in_operator(tree)
+    assert isinstance(tree, ast.Expression), "tree must be an Expression after fix"
 
     # Check all referenced variables exist in provided variables
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id not in ALLOWED_FUNCTIONS and node.id not in variables:
+        if isinstance(node, ast.Name) and node.id not in _SAFE_NAMES and node.id not in variables:
             raise ExpressionError(f"undefined variable: '{node.id}'")
 
     namespace = _build_namespace(variables)
