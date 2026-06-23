@@ -426,14 +426,19 @@ export class MemoryStore implements CreditStore {
 
   // ── Usage analytics ──────────────────────────────────────────────────
 
-  async spendByUser(start: Date, end: Date): Promise<SpendByUserRow[]> {
-    const usage = this.transactions.filter(
+  /** Filter transactions to usage records in the time window. */
+  private _usageInWindow(start: Date, end: Date): TransactionRecord[] {
+    return this.transactions.filter(
       (t) =>
         t.type === "usage" &&
         t.amount < 0 &&
         new Date(t.createdAt) >= start &&
         new Date(t.createdAt) <= end,
     );
+  }
+
+  async spendByUser(start: Date, end: Date): Promise<SpendByUserRow[]> {
+    const usage = this._usageInWindow(start, end);
     const byUser = new Map<string, { total: number; count: number }>();
     for (const t of usage) {
       const entry = byUser.get(t.userId) ?? { total: 0, count: 0 };
@@ -449,13 +454,7 @@ export class MemoryStore implements CreditStore {
   }
 
   async spendByModel(start: Date, end: Date): Promise<SpendByModelRow[]> {
-    const usage = this.transactions.filter(
-      (t) =>
-        t.type === "usage" &&
-        t.amount < 0 &&
-        new Date(t.createdAt) >= start &&
-        new Date(t.createdAt) <= end,
-    );
+    const usage = this._usageInWindow(start, end);
     const byModel = new Map<string, { total: number; count: number }>();
     for (const t of usage) {
       const model = (t.metadata?.model as string) ?? "unknown";
@@ -669,13 +668,7 @@ export class MemoryStore implements CreditStore {
   }
 
   async dailySpend(start: Date, end: Date): Promise<DailySpendRow[]> {
-    const usage = this.transactions.filter(
-      (t) =>
-        t.type === "usage" &&
-        t.amount < 0 &&
-        new Date(t.createdAt) >= start &&
-        new Date(t.createdAt) <= end,
-    );
+    const usage = this._usageInWindow(start, end);
     const byDay = new Map<string, { total: number; count: number }>();
     for (const t of usage) {
       const date = new Date(t.createdAt).toISOString().slice(0, 10);

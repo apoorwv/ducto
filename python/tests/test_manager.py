@@ -154,7 +154,7 @@ class TestAddCredits:
     def test_add_credits_increases_balance(self, manager: CreditManager) -> None:
         balance_before = manager.get_balance("user_1").balance
 
-        result = manager.add_credits("user_1", 50, type="purchase")
+        result = manager.add_credits("user_1", 50, tx_type="purchase")
 
         assert result.new_balance == balance_before + 50
         assert result.lifetime_purchased == 50
@@ -425,7 +425,7 @@ class TestSpendCapsManager:
         mgr = CreditManager(store=store)
         mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
         store.add_credits("user-1", 1000)
-        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=10, action="deny"))
+        store.set_spend_cap(SpendCap(user_id="user-1", cap_type="daily", limit=10, action="deny"))
 
         with pytest.raises(InsufficientCreditsError, match="Spend cap exceeded"):
             mgr.deduct("user-1", UsageMetrics(model="gpt-4", input_tokens=11))
@@ -435,7 +435,7 @@ class TestSpendCapsManager:
         mgr = CreditManager(store=store)
         mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
         store.add_credits("user-1", 1000)
-        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=10, action="warn"))
+        store.set_spend_cap(SpendCap(user_id="user-1", cap_type="daily", limit=10, action="warn"))
 
         result = mgr.deduct("user-1", UsageMetrics(model="gpt-4", input_tokens=11))
         assert result.transaction_id != ""
@@ -445,7 +445,7 @@ class TestSpendCapsManager:
         mgr = CreditManager(store=store)
         mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
         store.add_credits("user-1", 1000)
-        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=10, action="notify"))
+        store.set_spend_cap(SpendCap(user_id="user-1", cap_type="daily", limit=10, action="notify"))
 
         result = mgr.deduct("user-1", UsageMetrics(model="gpt-4", input_tokens=11))
         assert result.transaction_id != ""
@@ -455,7 +455,7 @@ class TestSpendCapsManager:
         mgr = CreditManager(store=store)
         mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
         store.add_credits("user-1", 1000)
-        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=100, action="deny"))
+        store.set_spend_cap(SpendCap(user_id="user-1", cap_type="daily", limit=100, action="deny"))
 
         result = mgr.deduct("user-1", UsageMetrics(model="gpt-4", input_tokens=5))
         assert result.transaction_id != ""
@@ -512,7 +512,7 @@ class TestEventSystem:
         mgr = CreditManager(store=store, emitter=emitter)
         mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
         mgr.add_credits("user-1", 100)
-        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=5, action="deny"))
+        store.set_spend_cap(SpendCap(user_id="user-1", cap_type="daily", limit=5, action="deny"))
 
         events: list[CreditEvent] = []
         emitter.on("credits.cap_reached", lambda e: events.append(e))
@@ -582,7 +582,7 @@ class TestEventSystem:
         mgr = CreditManager(store=store, emitter=emitter)
         mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
         mgr.add_credits("user-1", 100)
-        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=5, action="warn"))
+        store.set_spend_cap(SpendCap(user_id="user-1", cap_type="daily", limit=5, action="warn"))
 
         events: list[CreditEvent] = []
         emitter.on("credits.cap_warning", lambda e: events.append(e))

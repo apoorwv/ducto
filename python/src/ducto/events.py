@@ -16,6 +16,7 @@ Usage::
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -60,18 +61,16 @@ class CreditEventEmitter:
     def __init__(self) -> None:
         self._listeners: dict[CreditEventType, list[EventHandler]] = {}
 
-    def on(self, type: CreditEventType, handler: EventHandler) -> None:
+    def on(self, event_type: CreditEventType, handler: EventHandler) -> None:
         """Register a handler for a specific event type."""
-        if type not in self._listeners:
-            self._listeners[type] = []
-        self._listeners[type].append(handler)
+        if event_type not in self._listeners:
+            self._listeners[event_type] = []
+        self._listeners[event_type].append(handler)
 
-    def off(self, type: CreditEventType, handler: EventHandler) -> None:
+    def off(self, event_type: CreditEventType, handler: EventHandler) -> None:
         """Remove a previously registered handler."""
-        handlers = self._listeners.get(type)
+        handlers = self._listeners.get(event_type)
         if handlers:
-            from contextlib import suppress
-
             with suppress(ValueError):
                 handlers.remove(handler)
 
@@ -82,9 +81,9 @@ class CreditEventEmitter:
             for handler in handlers:
                 handler(event)
 
-    def clear_type(self, type: CreditEventType) -> None:
+    def clear_type(self, event_type: CreditEventType) -> None:
         """Remove all handlers for a specific type."""
-        self._listeners.pop(type, None)
+        self._listeners.pop(event_type, None)
 
     def clear_all(self) -> None:
         """Remove all handlers for all types."""

@@ -215,7 +215,7 @@ class SpendCap(BaseModel):
     """Configuration for a per-user spend cap."""
 
     user_id: str = ""
-    type: str = "daily"  # daily | monthly
+    cap_type: str = "daily"  # daily | monthly
     model: str | None = None
     limit: int = 0
     action: str = "deny"  # deny | warn | notify

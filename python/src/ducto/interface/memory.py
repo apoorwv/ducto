@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel
@@ -114,20 +114,20 @@ class MemoryStore(CreditStore):
         self,
         user_id: str,
         amount: int,
-        type: str = "adjustment",
+        tx_type: str = "adjustment",
         metadata: CreditMetadata | None = None,
         expires_at: datetime | None = None,
     ) -> AddCreditsResult:
         current = self._balances.get(user_id, 0)
         self._balances[user_id] = current + amount
-        self._lifetime[user_id] = self._lifetime.get(user_id, 0) + (amount if type == "purchase" else 0)
+        self._lifetime[user_id] = self._lifetime.get(user_id, 0) + (amount if tx_type == "purchase" else 0)
 
         tx_id = str(uuid.uuid4())
         tx = _TransactionRecord(
             id=tx_id,
             user_id=user_id,
             amount=amount,
-            type=type,
+            type=tx_type,
             metadata=metadata.model_dump() if metadata else {},
             created_at=datetime.now().isoformat(),
         )
@@ -289,12 +289,12 @@ class MemoryStore(CreditStore):
                 period_end="",
             )
         plan_def = self._plan_definitions[plan_id]
-        now = __import__("datetime").datetime.now()
+        now = datetime.now()
         period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         if now.month == 12:
-            period_end = now.replace(year=now.year + 1, month=1, day=1) - __import__("datetime").timedelta(days=1)
+            period_end = now.replace(year=now.year + 1, month=1, day=1) - timedelta(days=1)
         else:
-            period_end = now.replace(month=now.month + 1, day=1) - __import__("datetime").timedelta(days=1)
+            period_end = now.replace(month=now.month + 1, day=1) - timedelta(days=1)
         period_end = period_end.replace(hour=0, minute=0, second=0, microsecond=0)
         billing_period = period_start.strftime("%Y-%m-%d")
         usage = sum(
@@ -310,7 +310,7 @@ class MemoryStore(CreditStore):
         )
 
     def increment_usage_window(self, user_id: str, plan_id: str, amount: int) -> None:
-        now = __import__("datetime").datetime.now()
+        now = datetime.now()
         billing_period = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d")
         for w in self._usage_windows:
             if w["user_id"] == user_id and w["plan_id"] == plan_id and w["billing_period"] == billing_period:
@@ -441,9 +441,9 @@ class MemoryStore(CreditStore):
 
     # ── Usage analytics ─────────────────────────────────────────────────
 
-    def spend_by_user(self, start: datetime, end: datetime) -> list[SpendByUserRow]:
-        """Aggregate spend by user in a time window."""
-        usage = [
+    def _usage_in_window(self, start: datetime, end: datetime) -> list[_TransactionRecord]:
+        """Filter transactions to usage records in the time window."""
+        return [
             t
             for t in self._transactions
             if t.type == "usage"
@@ -451,6 +451,10 @@ class MemoryStore(CreditStore):
             and t.created_at
             and start.isoformat() <= t.created_at <= end.isoformat()
         ]
+
+    def spend_by_user(self, start: datetime, end: datetime) -> list[SpendByUserRow]:
+        """Aggregate spend by user in a time window."""
+        usage = self._usage_in_window(start, end)
         by_user: dict[str, dict[str, int]] = {}
         for t in usage:
             uid = t.user_id
@@ -465,14 +469,7 @@ class MemoryStore(CreditStore):
 
     def spend_by_model(self, start: datetime, end: datetime) -> list[SpendByModelRow]:
         """Aggregate spend by model in a time window."""
-        usage = [
-            t
-            for t in self._transactions
-            if t.type == "usage"
-            and t.amount < 0
-            and t.created_at
-            and start.isoformat() <= t.created_at <= end.isoformat()
-        ]
+        usage = self._usage_in_window(start, end)
         by_model: dict[str, dict[str, int]] = {}
         for t in usage:
             model = t.metadata.get("model", "unknown")
@@ -493,14 +490,7 @@ class MemoryStore(CreditStore):
 
     def daily_spend(self, start: datetime, end: datetime) -> list[DailySpendRow]:
         """Daily spend aggregation in a time window."""
-        usage = [
-            t
-            for t in self._transactions
-            if t.type == "usage"
-            and t.amount < 0
-            and t.created_at
-            and start.isoformat() <= t.created_at <= end.isoformat()
-        ]
+        usage = self._usage_in_window(start, end)
         by_day: dict[str, dict[str, int]] = {}
         for t in usage:
             date = t.created_at[:10]  # YYYY-MM-DD
@@ -524,7 +514,7 @@ class MemoryStore(CreditStore):
         if cap.model and cap.model != model:
             return None
         now = datetime.now()
-        if cap.type == "daily":
+        if cap.cap_type == "daily":
             window_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         else:
             window_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)

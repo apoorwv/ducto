@@ -147,12 +147,12 @@ class CreditManager:
         self,
         user_id: str,
         amount: int,
-        type: str = "adjustment",
+        tx_type: str = "adjustment",
         metadata: CreditMetadata | None = None,
         expires_at: datetime | None = None,
     ) -> AddCreditsResult:
         """Add credits to a user's account."""
-        result = self._store.add_credits(user_id, amount, type, metadata, expires_at)
+        result = self._store.add_credits(user_id, amount, tx_type, metadata, expires_at)
         self._emit(
             "credits.added",
             user_id,
@@ -160,7 +160,7 @@ class CreditManager:
                 "transaction_id": result.transaction_id,
                 "amount": result.amount,
                 "new_balance": result.new_balance,
-                "type": type,
+                "type": tx_type,
             },
         )
         return result
