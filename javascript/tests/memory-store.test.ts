@@ -13,7 +13,7 @@ describe("MemoryStore", () => {
     it("returns setup result with table names", async () => {
       const result = await store.setup();
       expect(result.success).toBe(true);
-      expect(result.tablesCreated).toHaveLength(5);
+      expect(result.tablesCreated).toHaveLength(6);
     });
   });
 
@@ -237,6 +237,64 @@ describe("MemoryStore", () => {
     it("unknown transaction returns error", async () => {
       const refund = await store.refundCredits("non-existent-id");
       expect(refund.error).toBe("transaction_not_found");
+    });
+  });
+
+  describe("credit expiry", () => {
+    it("credits with 1s TTL expire on sweep", async () => {
+      const expiresAt = new Date(Date.now() + 1);
+      await store.addCredits("user-1", 100, "purchase", null, expiresAt);
+
+      // Wait for expiry
+      await new Promise((r) => setTimeout(r, 10));
+
+      const result = await store.sweepExpiredCredits();
+      expect(result.expiredCount).toBe(1);
+      expect(result.expiredAmount).toBe(100);
+      expect(result.dryRun).toBe(false);
+      expect((await store.getBalance("user-1")).balance).toBe(0);
+    });
+
+    it("dryRun reports without modifying balance", async () => {
+      const expiresAt = new Date(Date.now() + 1);
+      await store.addCredits("user-1", 100, "purchase", null, expiresAt);
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      const result = await store.sweepExpiredCredits(true);
+      expect(result.expiredCount).toBe(1);
+      expect(result.expiredAmount).toBe(100);
+      expect(result.dryRun).toBe(true);
+      // Balance unchanged
+      expect((await store.getBalance("user-1")).balance).toBe(100);
+    });
+
+    it("credits without expiry never expire", async () => {
+      await store.addCredits("user-1", 100);
+
+      const result = await store.sweepExpiredCredits();
+      expect(result.expiredCount).toBe(0);
+      expect(result.expiredAmount).toBe(0);
+      expect((await store.getBalance("user-1")).balance).toBe(100);
+    });
+
+    it("sweep with no expired returns zero", async () => {
+      const result = await store.sweepExpiredCredits();
+      expect(result.expiredCount).toBe(0);
+      expect(result.expiredAmount).toBe(0);
+    });
+
+    it("partial expiry caps at current balance", async () => {
+      const expiresAt = new Date(Date.now() + 1);
+      await store.addCredits("user-1", 50, "purchase", null, expiresAt);
+      await store.addCredits("user-1", 30, "purchase"); // no expiry
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      const result = await store.sweepExpiredCredits();
+      // 50 expired, balance is 80, so expire min(50, 80) = 50
+      expect(result.expiredAmount).toBe(50);
+      expect((await store.getBalance("user-1")).balance).toBe(30);
     });
   });
 });

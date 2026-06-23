@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
@@ -22,6 +23,7 @@ from ducto.interface.models import (
     ReserveResult,
     SetupResult,
     SetUserPlanResult,
+    SweepResult,
 )
 
 
@@ -35,6 +37,7 @@ class _TransactionRecord(BaseModel):
     metadata: dict[str, Any] = {}
     reference_type: str | None = None
     reference_id: str | None = None
+    expires_at: str | None = None
 
 
 class _ReservationRecord(BaseModel):
@@ -76,6 +79,7 @@ class MemoryStore(CreditStore):
                 "003_pricing_config.sql",
                 "004_user_plans.sql",
                 "005_credit_refunds.sql",
+                "006_credit_expiry.sql",
             ],
         )
 
@@ -94,21 +98,23 @@ class MemoryStore(CreditStore):
         amount: int,
         type: str = "adjustment",
         metadata: CreditMetadata | None = None,
+        expires_at: datetime | None = None,
     ) -> AddCreditsResult:
         current = self._balances.get(user_id, 0)
         self._balances[user_id] = current + amount
         self._lifetime[user_id] = self._lifetime.get(user_id, 0) + (amount if type == "purchase" else 0)
 
         tx_id = str(uuid.uuid4())
-        self._transactions.append(
-            _TransactionRecord(
-                id=tx_id,
-                user_id=user_id,
-                amount=amount,
-                type=type,
-                metadata=metadata.model_dump() if metadata else {},
-            )
+        tx = _TransactionRecord(
+            id=tx_id,
+            user_id=user_id,
+            amount=amount,
+            type=type,
+            metadata=metadata.model_dump() if metadata else {},
         )
+        if expires_at:
+            tx.expires_at = expires_at.isoformat()
+        self._transactions.append(tx)
 
         return AddCreditsResult(
             transaction_id=tx_id,
@@ -362,4 +368,51 @@ class MemoryStore(CreditStore):
             user_id=orig_tx.user_id,
             amount=actual_refund,
             new_balance=self._balances[orig_tx.user_id],
+        )
+
+    # ── Credit expiry ─────────────────────────────────────────────────────
+
+    def sweep_expired_credits(self, dry_run: bool = False) -> SweepResult:
+        """Sweep expired credits from all users' balances."""
+        now = datetime.now()
+        expired_by_user: dict[str, int] = {}
+
+        for tx in self._transactions:
+            if tx.expires_at and tx.type in ("purchase", "adjustment"):
+                try:
+                    expires_dt = datetime.fromisoformat(tx.expires_at)
+                except ValueError:
+                    continue
+                if expires_dt <= now:
+                    expired_by_user[tx.user_id] = expired_by_user.get(tx.user_id, 0) + tx.amount
+
+        expired_count = 0
+        expired_amount = 0
+
+        for user_id, total_expired in expired_by_user.items():
+            current_balance = self._balances.get(user_id, 0)
+            to_expire = min(total_expired, current_balance)
+
+            if to_expire > 0:
+                expired_count += 1
+                expired_amount += to_expire
+
+                if not dry_run:
+                    self._balances[user_id] = current_balance - to_expire
+
+                    tx_id = str(uuid.uuid4())
+                    self._transactions.append(
+                        _TransactionRecord(
+                            id=tx_id,
+                            user_id=user_id,
+                            amount=-to_expire,
+                            type="adjustment",
+                            metadata={"reason": "credit_expired", "expired_amount": to_expire},
+                        )
+                    )
+
+        return SweepResult(
+            expired_count=expired_count,
+            expired_amount=expired_amount,
+            dry_run=dry_run,
         )

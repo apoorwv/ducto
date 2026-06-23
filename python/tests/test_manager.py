@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from ducto import CreditManager, UsageMetrics
@@ -284,3 +286,39 @@ class TestPlanAllowance:
         result = mgr.deduct("user_1", UsageMetrics(input_tokens=10))
         assert result.amount == -10
         assert result.balance_after == 40
+
+
+class TestCreditExpiry:
+    def test_sweep_expired_through_manager(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict(
+            {
+                "version": 1,
+                "models": {"_default": "input_tokens * 1"},
+            }
+        )
+        expires_at = datetime.now().replace(second=0)
+        mgr.add_credits("user_1", 100, "purchase", expires_at=expires_at)
+
+        result = mgr.sweep_expired_credits()
+        assert result.expired_count == 1
+        assert result.expired_amount == 100
+        assert mgr.get_balance("user_1").balance == 0
+
+    def test_dry_run_through_manager(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict(
+            {
+                "version": 1,
+                "models": {"_default": "input_tokens * 1"},
+            }
+        )
+        expires_at = datetime.now().replace(second=0)
+        mgr.add_credits("user_1", 100, "purchase", expires_at=expires_at)
+
+        result = mgr.sweep_expired_credits(dry_run=True)
+        assert result.expired_count == 1
+        assert result.dry_run is True
+        assert mgr.get_balance("user_1").balance == 100

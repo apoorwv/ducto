@@ -8,6 +8,7 @@ stores for testing.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from ducto.interface.models import (
     AddCreditsResult,
@@ -22,6 +23,7 @@ from ducto.interface.models import (
     ReserveResult,
     SetupResult,
     SetUserPlanResult,
+    SweepResult,
 )
 
 
@@ -61,8 +63,13 @@ class CreditStore(ABC):
         amount: int,
         type: str = "adjustment",
         metadata: CreditMetadata | None = None,
+        expires_at: datetime | None = None,
     ) -> AddCreditsResult:
-        """Atomically add credits and log a transaction."""
+        """Atomically add credits and log a transaction.
+
+        Args:
+            expires_at: Optional datetime after which the credits expire.
+        """
         ...
 
     @abstractmethod
@@ -160,5 +167,22 @@ class CreditStore(ABC):
         Returns:
             ``RefundResult`` with the refund transaction details, or
             ``error`` set if the transaction doesn't exist or is already refunded.
+        """
+        ...
+
+    # ── Credit expiry ───────────────────────────────────────────────────
+
+    @abstractmethod
+    def sweep_expired_credits(
+        self,
+        dry_run: bool = False,
+    ) -> SweepResult:
+        """Sweep expired credits from all users' balances.
+
+        Args:
+            dry_run: If True, report what would be expired without modifying.
+
+        Returns:
+            ``SweepResult`` with count and amount of expired credits.
         """
         ...

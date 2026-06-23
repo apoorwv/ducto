@@ -11,6 +11,7 @@ import type {
   ReserveResult,
   SetUserPlanResult,
   SetupResult,
+  SweepResult,
 } from "../types.js";
 import type { CreditStore } from "./credit-store.js";
 
@@ -93,13 +94,13 @@ export class PostgresStore implements CreditStore {
     amount: number,
     type = "adjustment",
     metadata?: CreditMetadata | null,
+    expiresAt?: Date | null,
   ): Promise<AddCreditsResult> {
-    const rows = await this.callproc("credits_add", [
-      userId,
-      amount,
-      type,
-      JSON.stringify(metadata ?? {}),
-    ]);
+    const meta: Record<string, unknown> = { ...(metadata ?? {}) };
+    if (expiresAt) {
+      meta.expires_at = expiresAt instanceof Date ? expiresAt.toISOString() : String(expiresAt);
+    }
+    const rows = await this.callproc("credits_add", [userId, amount, type, JSON.stringify(meta)]);
     const row = (rows?.[0] ?? {}) as Record<string, unknown>;
     return {
       transactionId: String(row.id ?? ""),
@@ -297,6 +298,18 @@ export class PostgresStore implements CreditStore {
       userId: String(row.user_id ?? ""),
       amount: Number(row.amount ?? 0),
       newBalance: Number(row.new_balance ?? 0),
+    };
+  }
+
+  // ── Credit expiry ────────────────────────────────────────────────────
+
+  async sweepExpiredCredits(dryRun = false): Promise<SweepResult> {
+    const rows = await this.callproc("expire_credits", [dryRun]);
+    const row = (rows?.[0] ?? {}) as Record<string, unknown>;
+    return {
+      expiredCount: Number(row.expired_count ?? 0),
+      expiredAmount: Number(row.expired_amount ?? 0),
+      dryRun,
     };
   }
 }

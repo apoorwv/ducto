@@ -164,3 +164,11 @@ class RefundResult(BaseModel):
     amount: int = 0
     new_balance: int = 0
     error: str | None = None
+
+
+class SweepResult(BaseModel):
+    """Result of sweeping expired credits."""
+
+    expired_count: int = 0
+    expired_amount: int = 0
+    dry_run: bool = False

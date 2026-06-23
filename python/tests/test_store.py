@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from ducto import ConfigError, CreditManager, MemoryStore
@@ -122,6 +124,58 @@ class TestPlanManagement:
 
         store.increment_usage_window("user-1", "basic", 30)
         assert store.check_allowance("user-1").allowance_remaining == 120
+
+
+# ── Credit expiry ───────────────────────────────────────────────────────────
+
+
+class TestCreditExpiry:
+    def test_credits_expire_after_ttl(self) -> None:
+        store = MemoryStore()
+        expires_at = datetime.now().replace(second=0)  # already expired
+        store.add_credits("user_1", 100, "purchase", expires_at=expires_at)
+
+        result = store.sweep_expired_credits()
+        assert result.expired_count == 1
+        assert result.expired_amount == 100
+        assert result.dry_run is False
+        assert store.get_balance("user_1").balance == 0
+
+    def test_dry_run_reports_without_modifying(self) -> None:
+        store = MemoryStore()
+        expires_at = datetime.now().replace(second=0)
+        store.add_credits("user_1", 100, "purchase", expires_at=expires_at)
+
+        result = store.sweep_expired_credits(dry_run=True)
+        assert result.expired_count == 1
+        assert result.expired_amount == 100
+        assert result.dry_run is True
+        assert store.get_balance("user_1").balance == 100  # unchanged
+
+    def test_credits_without_expiry_never_expire(self) -> None:
+        store = MemoryStore()
+        store.add_credits("user_1", 100)
+
+        result = store.sweep_expired_credits()
+        assert result.expired_count == 0
+        assert result.expired_amount == 0
+        assert store.get_balance("user_1").balance == 100
+
+    def test_sweep_with_no_expired_returns_zero(self) -> None:
+        store = MemoryStore()
+        result = store.sweep_expired_credits()
+        assert result.expired_count == 0
+        assert result.expired_amount == 0
+
+    def test_partial_expiry_caps_at_balance(self) -> None:
+        store = MemoryStore()
+        expires_at = datetime.now().replace(second=0)
+        store.add_credits("user_1", 50, "purchase", expires_at=expires_at)
+        store.add_credits("user_1", 30, "purchase")
+
+        result = store.sweep_expired_credits()
+        assert result.expired_amount == 50
+        assert store.get_balance("user_1").balance == 30
 
 
 # ── Refunds ────────────────────────────────────────────────────────────────

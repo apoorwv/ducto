@@ -22,6 +22,7 @@ from ducto.interface.models import (
     ReserveResult,
     SetupResult,
     SetUserPlanResult,
+    SweepResult,
 )
 from ducto.manager import CreditManager, InsufficientCreditsError, PricingNotLoadedError
 from ducto.metrics import ToolCall, UsageMetrics
@@ -47,6 +48,7 @@ __all__ = [
     "GetUserPlanResult",
     "SetUserPlanResult",
     "RefundResult",
+    "SweepResult",
     "BalanceResult",
     "AddCreditsResult",
     "ReserveResult",

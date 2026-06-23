@@ -11,6 +11,7 @@ import type {
   ReserveResult,
   SetUserPlanResult,
   SetupResult,
+  SweepResult,
 } from "../types.js";
 
 /** Interface for credit storage backends. */
@@ -22,6 +23,7 @@ export interface CreditStore {
     amount: number,
     type?: string,
     metadata?: CreditMetadata | null,
+    expiresAt?: Date | null,
   ): Promise<AddCreditsResult>;
   reserveCredits(
     userId: string,
@@ -53,4 +55,7 @@ export interface CreditStore {
     reason?: string,
     metadata?: CreditMetadata | null,
   ): Promise<RefundResult>;
+
+  // ── Credit expiry ────────────────────────────────────────────────────
+  sweepExpiredCredits(dryRun?: boolean): Promise<SweepResult>;
 }

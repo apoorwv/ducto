@@ -11,6 +11,7 @@ import type {
   ReserveResult,
   SetUserPlanResult,
   SetupResult,
+  SweepResult,
 } from "../types.js";
 import type { CreditStore } from "./credit-store.js";
 
@@ -69,12 +70,17 @@ export class HttpxSupabaseStore implements CreditStore {
     amount: number,
     type = "adjustment",
     metadata?: CreditMetadata | null,
+    expiresAt?: Date | null,
   ): Promise<AddCreditsResult> {
+    const meta: Record<string, unknown> = { ...(metadata ?? {}) };
+    if (expiresAt) {
+      meta.expires_at = expiresAt instanceof Date ? expiresAt.toISOString() : String(expiresAt);
+    }
     const row = await this.rpc("credits_add", {
       p_user_id: userId,
       p_amount: amount,
       p_type: type,
-      p_metadata: metadata ?? {},
+      p_metadata: meta,
     });
     return {
       transactionId: String(row.id ?? ""),
@@ -248,6 +254,19 @@ export class HttpxSupabaseStore implements CreditStore {
       userId: String(row.user_id ?? ""),
       amount: Number(row.amount ?? 0),
       newBalance: Number(row.new_balance ?? 0),
+    };
+  }
+
+  // ── Credit expiry ────────────────────────────────────────────────────
+
+  async sweepExpiredCredits(dryRun = false): Promise<SweepResult> {
+    const row = await this.rpc("expire_credits", {
+      p_dry_run: dryRun,
+    });
+    return {
+      expiredCount: Number(row.expired_count ?? 0),
+      expiredAmount: Number(row.expired_amount ?? 0),
+      dryRun,
     };
   }
 }

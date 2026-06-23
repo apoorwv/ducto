@@ -10,6 +10,7 @@ import type {
   RefundResult,
   ReserveResult,
   SetupResult,
+  SweepResult,
 } from "./types.js";
 import type { CreditStore } from "./stores/credit-store.js";
 import { loadConfigFromDict } from "./config.js";
@@ -96,8 +97,9 @@ export class CreditManager {
     amount: number,
     type = "adjustment",
     metadata?: CreditMetadata | null,
+    expiresAt?: Date | null,
   ): Promise<AddCreditsResult> {
-    return await this.store.addCredits(userId, amount, type, metadata);
+    return await this.store.addCredits(userId, amount, type, metadata, expiresAt);
   }
 
   /** Reserve credits for an upcoming operation. */
@@ -210,5 +212,15 @@ export class CreditManager {
     metadata?: CreditMetadata | null,
   ): Promise<DeductionResult> {
     return await this.deduct(userId, { fixedJob: jobName }, idempotencyKey, metadata);
+  }
+
+  /**
+   * Sweep expired credits from all users' balances.
+   *
+   * When ``dryRun`` is true, reports what would be expired without modifying
+   * any balances.
+   */
+  async sweepExpiredCredits(dryRun?: boolean): Promise<SweepResult> {
+    return await this.store.sweepExpiredCredits(dryRun);
   }
 }

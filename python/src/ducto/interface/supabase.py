@@ -6,6 +6,7 @@ dependency in the critical path.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from ducto.interface.base import CreditStore
@@ -22,6 +23,7 @@ from ducto.interface.models import (
     ReserveResult,
     SetupResult,
     SetUserPlanResult,
+    SweepResult,
 )
 from ducto.sql import _get_sql_files
 
@@ -122,14 +124,18 @@ class HttpxSupabaseStore(CreditStore):
         amount: int,
         type: str = "adjustment",
         metadata: CreditMetadata | None = None,
+        expires_at: datetime | None = None,
     ) -> AddCreditsResult:
+        meta = metadata.model_dump(mode="json") if metadata else {}
+        if expires_at:
+            meta["expires_at"] = expires_at.isoformat()
         row = self._rpc(
             "credits_add",
             {
                 "p_user_id": user_id,
                 "p_amount": amount,
                 "p_type": type,
-                "p_metadata": (metadata.model_dump(mode="json") if metadata else {}),
+                "p_metadata": meta,
             },
         )
         return AddCreditsResult(
@@ -305,4 +311,14 @@ class HttpxSupabaseStore(CreditStore):
             user_id=str(row.get("user_id", "")),
             amount=int(row.get("amount", 0)),
             new_balance=int(row.get("new_balance", 0)),
+        )
+
+    # ── Credit expiry ───────────────────────────────────────────────────
+
+    def sweep_expired_credits(self, dry_run: bool = False) -> SweepResult:
+        row = self._rpc("expire_credits", {"p_dry_run": dry_run})
+        return SweepResult(
+            expired_count=int(row.get("expired_count", 0)),
+            expired_amount=int(row.get("expired_amount", 0)),
+            dry_run=dry_run,
         )

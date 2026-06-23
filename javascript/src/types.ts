@@ -118,3 +118,10 @@ export interface RefundResult {
   newBalance: number;
   error?: string | null;
 }
+
+/** Result of sweeping expired credits. */
+export interface SweepResult {
+  expiredCount: number;
+  expiredAmount: number;
+  dryRun: boolean;
+}

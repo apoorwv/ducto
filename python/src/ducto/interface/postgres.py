@@ -7,6 +7,7 @@ Postgres database that has the ducto schema installed.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from ducto.interface.base import CreditStore
 from ducto.interface.models import (
@@ -22,6 +23,7 @@ from ducto.interface.models import (
     ReserveResult,
     SetupResult,
     SetUserPlanResult,
+    SweepResult,
 )
 from ducto.sql import _get_sql_files
 
@@ -90,13 +92,17 @@ class PostgresStore(CreditStore):
         amount: int,
         type: str = "adjustment",
         metadata: CreditMetadata | None = None,
+        expires_at: datetime | None = None,
     ) -> AddCreditsResult:
         conn = self._conn()
         try:
+            meta = metadata.model_dump(mode="json") if metadata else {}
+            if expires_at:
+                meta["expires_at"] = expires_at.isoformat()
             with conn.cursor() as cur:
                 cur.callproc(
                     "credits_add",
-                    [user_id, amount, type, json.dumps(metadata.model_dump(mode="json")) if metadata else "{}"],
+                    [user_id, amount, type, json.dumps(meta)],
                 )
                 row = cur.fetchone()
             conn.commit()
@@ -359,4 +365,23 @@ class PostgresStore(CreditStore):
             user_id=str(result_dict.get("user_id", "")),
             amount=int(result_dict.get("amount", 0)),
             new_balance=int(result_dict.get("new_balance", 0)),
+        )
+
+    # ── Credit expiry ───────────────────────────────────────────────────
+
+    def sweep_expired_credits(self, dry_run: bool = False) -> SweepResult:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("expire_credits", [dry_run])
+                row = cur.fetchone()
+            conn.commit()
+        finally:
+            conn.close()
+
+        result_dict = row[0] if row and isinstance(row[0], dict) else {}
+        return SweepResult(
+            expired_count=int(result_dict.get("expired_count", 0)),
+            expired_amount=int(result_dict.get("expired_amount", 0)),
+            dry_run=dry_run,
         )

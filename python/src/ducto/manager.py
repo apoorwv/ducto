@@ -28,6 +28,7 @@ Example::
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from ducto.engine import PricingEngine
@@ -41,6 +42,7 @@ from ducto.interface.models import (
     RefundResult,
     ReserveResult,
     SetupResult,
+    SweepResult,
 )
 from ducto.metrics import UsageMetrics
 
@@ -126,9 +128,10 @@ class CreditManager:
         amount: int,
         type: str = "adjustment",
         metadata: CreditMetadata | None = None,
+        expires_at: datetime | None = None,
     ) -> AddCreditsResult:
         """Add credits to a user's account."""
-        return self._store.add_credits(user_id, amount, type, metadata)
+        return self._store.add_credits(user_id, amount, type, metadata, expires_at)
 
     def reserve_credits(
         self,
@@ -269,6 +272,17 @@ class CreditManager:
             ``RefundResult`` with the refund transaction details.
         """
         return self._store.refund_credits(transaction_id, amount, reason, metadata)
+
+    def sweep_expired_credits(self, dry_run: bool = False) -> SweepResult:
+        """Sweep expired credits from all users' balances.
+
+        Args:
+            dry_run: If True, report without modifying.
+
+        Returns:
+            ``SweepResult`` with expired count and amount.
+        """
+        return self._store.sweep_expired_credits(dry_run)
 
     def deduct_fixed(
         self,

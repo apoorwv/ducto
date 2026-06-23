@@ -250,4 +250,30 @@ describe("CreditManager", () => {
       expect(balance.balance).toBe(70); // 100 - 50 + 20
     });
   });
+
+  describe("credit expiry", () => {
+    it("sweepExpiredCredits delegates to store", async () => {
+      manager.publishPricingFromDict(TEST_CONFIG);
+      await manager.addCredits("user-1", 100, "purchase", null, new Date(Date.now() + 1));
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      const result = await manager.sweepExpiredCredits();
+      expect(result.expiredCount).toBe(1);
+      expect(result.expiredAmount).toBe(100);
+      expect((await manager.getBalance("user-1")).balance).toBe(0);
+    });
+
+    it("dryRun through manager reports without modifying", async () => {
+      manager.publishPricingFromDict(TEST_CONFIG);
+      await manager.addCredits("user-1", 100, "purchase", null, new Date(Date.now() + 1));
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      const result = await manager.sweepExpiredCredits(true);
+      expect(result.expiredCount).toBe(1);
+      expect(result.dryRun).toBe(true);
+      expect((await manager.getBalance("user-1")).balance).toBe(100);
+    });
+  });
 });

@@ -13,6 +13,7 @@ import type {
   ReserveResult,
   SetUserPlanResult,
   SetupResult,
+  SweepResult,
 } from "../types.js";
 import type { CreditStore } from "./credit-store.js";
 
@@ -24,6 +25,7 @@ interface TransactionRecord {
   metadata?: Record<string, unknown>;
   referenceType?: string | null;
   referenceId?: string | null;
+  expiresAt?: string | null;
 }
 
 interface ReservationRecord {
@@ -62,6 +64,7 @@ export class MemoryStore implements CreditStore {
         "003_pricing_config.sql",
         "004_user_plans.sql",
         "005_credit_refunds.sql",
+        "006_credit_expiry.sql",
       ],
       rpcsCreated: [],
       errors: [],
@@ -82,6 +85,7 @@ export class MemoryStore implements CreditStore {
     amount: number,
     type = "adjustment",
     _metadata?: CreditMetadata | null,
+    expiresAt?: Date | null,
   ): Promise<AddCreditsResult> {
     const current = this.balances.get(userId) ?? 0;
     this.balances.set(userId, current + amount);
@@ -90,7 +94,11 @@ export class MemoryStore implements CreditStore {
     this.lifetime.set(userId, (this.lifetime.get(userId) ?? 0) + lifetimeAdd);
 
     const txId = randomUUID();
-    this.transactions.push({ id: txId, userId, amount, type });
+    const tx: TransactionRecord = { id: txId, userId, amount, type };
+    if (expiresAt) {
+      tx.expiresAt = expiresAt instanceof Date ? expiresAt.toISOString() : String(expiresAt);
+    }
+    this.transactions.push(tx);
 
     return {
       transactionId: txId,
@@ -328,5 +336,50 @@ export class MemoryStore implements CreditStore {
       amount: actualRefund,
       newBalance: current + actualRefund,
     };
+  }
+
+  // ── Credit expiry ─────────────────────────────────────────────────────
+
+  async sweepExpiredCredits(dryRun = false): Promise<SweepResult> {
+    const now = new Date();
+    const expiredByUser = new Map<string, number>();
+
+    // Find all expired grant transactions
+    for (const tx of this.transactions) {
+      if (tx.expiresAt && (tx.type === "purchase" || tx.type === "adjustment")) {
+        if (new Date(tx.expiresAt) <= now) {
+          const current = expiredByUser.get(tx.userId) ?? 0;
+          expiredByUser.set(tx.userId, current + tx.amount);
+        }
+      }
+    }
+
+    let expiredCount = 0;
+    let expiredAmount = 0;
+
+    for (const [userId, totalExpired] of expiredByUser) {
+      const currentBalance = this.balances.get(userId) ?? 0;
+      const toExpire = Math.min(totalExpired, currentBalance);
+
+      if (toExpire > 0) {
+        expiredCount++;
+        expiredAmount += toExpire;
+
+        if (!dryRun) {
+          this.balances.set(userId, currentBalance - toExpire);
+
+          const txId = randomUUID();
+          this.transactions.push({
+            id: txId,
+            userId,
+            amount: -toExpire,
+            type: "adjustment",
+            metadata: { reason: "credit_expired", expiredAmount: toExpire },
+          });
+        }
+      }
+    }
+
+    return { expiredCount, expiredAmount, dryRun };
   }
 }
