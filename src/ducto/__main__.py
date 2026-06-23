@@ -6,17 +6,56 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ducto.interface.supabase import HttpxSupabaseStore
 
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None  # type: ignore[assignment]
+
+
+def _load_env() -> None:
+    """Load .env from CWD. Won't override env vars already set."""
+    env_path = Path.cwd() / ".env"
+    if env_path.is_file():
+        if load_dotenv:
+            load_dotenv(env_path, override=False)
+    else:
+        pass
+
+
 _RETRY_DELAY = 2
 _RETRIES = 15
+
+# Extra name → top-level import names needed
+_EXTRAS: dict[str, list[str]] = {
+    "postgres": ["psycopg2"],
+    "supabase": ["httpx"],
+}
+
+
+def _require_extra(extra: str) -> None:
+    """Exit with install hint if any import for *extra* is missing."""
+    for mod in _EXTRAS.get(extra, []):
+        try:
+            __import__(mod)
+        except ImportError:
+            print(
+                f"ducto[{extra}] extra required (missing: {mod}). pip install ducto[{extra}]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
 
 def _store_from_env() -> HttpxSupabaseStore:
     """Create HttpxSupabaseStore from SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY."""
+    _require_extra("supabase")
+
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
     if not url:
@@ -32,6 +71,8 @@ def _store_from_env() -> HttpxSupabaseStore:
 
 
 def _migrate(args: list[str]) -> None:
+    _require_extra("postgres")
+
     if not args:
         print("Usage: ducto migrate <database_url>", file=sys.stderr)
         sys.exit(1)
@@ -138,19 +179,54 @@ def _pricing(args: list[str]) -> None:
         sys.exit(1)
 
 
+def _usage() -> None:
+    lines = [
+        "Usage: ducto <command> [options]",
+        "",
+        "Commands:",
+    ]
+    for name, (help_text, _) in sorted(_COMMANDS.items()):
+        lines.append(f"  {name:<12} {help_text}")
+    lines += [
+        "",
+        "Options:",
+        "  -h, --help    Show this help message",
+        "",
+        "Extras:",
+        "  pip install ducto[postgres]   Postgres migration support",
+        "  pip install ducto[supabase]   Supabase REST API support",
+        "  pip install ducto[test]       Development & test tooling",
+    ]
+    print("\n".join(lines))
+
+
+# Command registry: name → (help text, handler)
+_COMMANDS: dict[str, tuple[str, Callable[[list[str]], None]]] = {
+    "migrate": (
+        "<database_url> — Run database migrations (ducto[postgres])",
+        _migrate,
+    ),
+    "pricing": (
+        "get | set <file> — Manage pricing config (ducto[supabase])",
+        _pricing,
+    ),
+}
+
+
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("Usage: ducto <migrate|pricing> ...", file=sys.stderr)
-        sys.exit(1)
+    _load_env()
+
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        _usage()
+        sys.exit(0)
 
     cmd = sys.argv[1]
-    if cmd == "migrate":
-        _migrate(sys.argv[2:])
-    elif cmd == "pricing":
-        _pricing(sys.argv[2:])
-    else:
-        print(f"Unknown command: {cmd}", file=sys.stderr)
+    entry = _COMMANDS.get(cmd)
+    if entry is None:
+        print(f"Unknown command: {cmd}\n", file=sys.stderr)
+        _usage()
         sys.exit(1)
+    entry[1](sys.argv[2:])
 
 
 if __name__ == "__main__":

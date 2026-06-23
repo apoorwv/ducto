@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
     "pyyaml>=6.0.3",
 ]
 keywords = ["credits", "billing", "llm", "usage-metering", "pricing"]
