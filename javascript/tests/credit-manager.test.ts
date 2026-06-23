@@ -445,4 +445,132 @@ describe("CreditManager", () => {
       expect(result.transactionId).toBeTruthy();
     });
   });
+
+  describe("event system", () => {
+    it("emits credits.deducted event on deduct", async () => {
+      const store = new MemoryStore();
+      const emitter = new (await import("../src/stores/events.js")).CreditEventEmitter();
+      const mgr = new CreditManager(store, undefined, emitter);
+
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+      await mgr.addCredits("user-1", 100);
+
+      const events: Array<{ type: string; userId: string }> = [];
+      emitter.on("credits.deducted", (e) => events.push({ type: e.type, userId: e.userId }));
+
+      await mgr.deduct("user-1", { inputTokens: 10 });
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe("credits.deducted");
+      expect(events[0].userId).toBe("user-1");
+    });
+
+    it("credits.added event includes amount and newBalance", async () => {
+      const emitter = new (await import("../src/stores/events.js")).CreditEventEmitter();
+      const mgr = new CreditManager(new MemoryStore(), undefined, emitter);
+
+      const events: Array<{ type: string; data?: Record<string, unknown> }> = [];
+      emitter.on("credits.added", (e) => events.push({ type: e.type, data: e.data }));
+
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+      await mgr.addCredits("user-1", 50);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].data?.amount).toBe(50);
+    });
+
+    it("emits credits.refunded event on refund", async () => {
+      const store = new MemoryStore();
+      const emitter = new (await import("../src/stores/events.js")).CreditEventEmitter();
+      const mgr = new CreditManager(store, undefined, emitter);
+
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+      await mgr.addCredits("user-1", 100);
+
+      const events: Array<{ type: string }> = [];
+      emitter.on("credits.refunded", (e) => events.push({ type: e.type }));
+
+      const deduct = await mgr.deduct("user-1", { inputTokens: 10 });
+      await mgr.refundCredits(deduct.transactionId);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe("credits.refunded");
+    });
+
+    it("emits credits.cap_reached event when deny cap blocks", async () => {
+      const store = new MemoryStore();
+      const emitter = new (await import("../src/stores/events.js")).CreditEventEmitter();
+      const mgr = new CreditManager(store, undefined, emitter);
+
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+      await mgr.addCredits("user-1", 100);
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 5, action: "deny" });
+
+      const events: Array<{ type: string; data?: Record<string, unknown> }> = [];
+      emitter.on("credits.cap_reached", (e) => events.push({ type: e.type, data: e.data }));
+
+      await expect(() => mgr.deduct("user-1", { inputTokens: 10 })).rejects.toThrow(
+        "Spend cap exceeded",
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe("credits.cap_reached");
+    });
+
+    it("emits credits.cap_warning event when warn cap allows through", async () => {
+      const store = new MemoryStore();
+      const emitter = new (await import("../src/stores/events.js")).CreditEventEmitter();
+      const mgr = new CreditManager(store, undefined, emitter);
+
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+      await mgr.addCredits("user-1", 100);
+      store.setSpendCap({ userId: "user-1", type: "daily", limit: 5, action: "warn" });
+
+      const events: Array<{ type: string }> = [];
+      emitter.on("credits.cap_warning", (e) => events.push({ type: e.type }));
+
+      await mgr.deduct("user-1", { inputTokens: 10 });
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe("credits.cap_warning");
+    });
+
+    it("emits credits.expired event on sweep", async () => {
+      const store = new MemoryStore();
+      const emitter = new (await import("../src/stores/events.js")).CreditEventEmitter();
+      const mgr = new CreditManager(store, undefined, emitter);
+
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+
+      const events: Array<{ type: string; data?: Record<string, unknown> }> = [];
+      emitter.on("credits.expired", (e) => events.push({ type: e.type, data: e.data }));
+
+      await mgr.addCredits("user-1", 100, "purchase", null, new Date(Date.now() + 1));
+      await new Promise((r) => setTimeout(r, 10));
+      await mgr.sweepExpiredCredits();
+
+      expect(events).toHaveLength(1);
+      expect(events[0].type).toBe("credits.expired");
+      expect(events[0].data?.expiredCount).toBe(1);
+    });
+
+    it("multiple handlers all fire for same event", async () => {
+      const emitter = new (await import("../src/stores/events.js")).CreditEventEmitter();
+      const mgr = new CreditManager(new MemoryStore(), undefined, emitter);
+
+      const called: number[] = [];
+      emitter.on("credits.deducted", () => called.push(1));
+      emitter.on("credits.deducted", () => called.push(2));
+
+      mgr.publishPricingFromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+      await mgr.addCredits("user-1", 100);
+      await mgr.deduct("user-1", { inputTokens: 10 });
+
+      expect(called).toHaveLength(2);
+    });
+
+    it("unregistered event type does not throw", async () => {
+      const emitter = new (await import("../src/stores/events.js")).CreditEventEmitter();
+      expect(() =>
+        emitter.emit({ type: "credits.deducted", timestamp: new Date(), userId: "u1" }),
+      ).not.toThrow();
+    });
+  });
 });

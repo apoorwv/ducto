@@ -5,6 +5,7 @@ __version__ = "0.1.2"
 from ducto.breakdown import CostBreakdown
 from ducto.config import ConfigError, PricingConfig
 from ducto.engine import PricingEngine
+from ducto.events import CreditEvent, CreditEventEmitter
 from ducto.expr import ExpressionError, evaluate_expression, validate_expression
 from ducto.interface.memory import MemoryStore
 from ducto.interface.models import (
@@ -47,6 +48,8 @@ __all__ = [
     "ConfigError",
     "CostBreakdown",
     "CreateTeamResult",
+    "CreditEvent",
+    "CreditEventEmitter",
     "CreditManager",
     "CreditMetadata",
     "DailySpendRow",

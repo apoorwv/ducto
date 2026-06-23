@@ -52,5 +52,9 @@ export { MemoryStore } from "./stores/memory-store.js";
 export { HttpxSupabaseStore } from "./stores/supabase-store.js";
 export { PostgresStore } from "./stores/postgres-store.js";
 
+// Events
+export type { CreditEvent, CreditEventType } from "./stores/events.js";
+export { CreditEventEmitter } from "./stores/events.js";
+
 // Utilities
 export { loadPricingFile } from "./load-pricing-file.js";

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from ducto import CreditManager, UsageMetrics
+from ducto.events import CreditEvent, CreditEventEmitter
 from ducto.interface.memory import MemoryStore
 from ducto.interface.models import PlanDefinition, PricingConfigV2, SpendCap
 from ducto.manager import InsufficientCreditsError, PricingNotLoadedError
@@ -458,3 +459,134 @@ class TestSpendCapsManager:
 
         result = mgr.deduct("user-1", UsageMetrics(model="gpt-4", input_tokens=5))
         assert result.transaction_id != ""
+
+
+class TestEventSystem:
+    """Tests for CreditManager event emission."""
+
+    def test_emits_deducted_event(self) -> None:
+        store = MemoryStore()
+        emitter = CreditEventEmitter()
+        mgr = CreditManager(store=store, emitter=emitter)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        mgr.add_credits("user-1", 100)
+
+        events: list[CreditEvent] = []
+        emitter.on("credits.deducted", lambda e: events.append(e))
+
+        mgr.deduct("user-1", UsageMetrics(input_tokens=10))
+        assert len(events) == 1
+        assert events[0].type == "credits.deducted"
+        assert events[0].user_id == "user-1"
+
+    def test_emits_added_event(self) -> None:
+        emitter = CreditEventEmitter()
+        mgr = CreditManager(store=MemoryStore(), emitter=emitter)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+
+        events: list[CreditEvent] = []
+        emitter.on("credits.added", lambda e: events.append(e))
+
+        mgr.add_credits("user-1", 50)
+        assert len(events) == 1
+        assert events[0].data is not None
+        assert events[0].data["amount"] == 50
+
+    def test_emits_refunded_event(self) -> None:
+        store = MemoryStore()
+        emitter = CreditEventEmitter()
+        mgr = CreditManager(store=store, emitter=emitter)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        mgr.add_credits("user-1", 100)
+
+        events: list[CreditEvent] = []
+        emitter.on("credits.refunded", lambda e: events.append(e))
+
+        deduct = mgr.deduct("user-1", UsageMetrics(input_tokens=10))
+        mgr.refund_credits(deduct.transaction_id)
+        assert len(events) == 1
+
+    def test_emits_cap_reached_on_deny(self) -> None:
+        store = MemoryStore()
+        emitter = CreditEventEmitter()
+        mgr = CreditManager(store=store, emitter=emitter)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        mgr.add_credits("user-1", 100)
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=5, action="deny"))
+
+        events: list[CreditEvent] = []
+        emitter.on("credits.cap_reached", lambda e: events.append(e))
+
+        with pytest.raises(InsufficientCreditsError):
+            mgr.deduct("user-1", UsageMetrics(input_tokens=10))
+        assert len(events) == 1
+        assert events[0].type == "credits.cap_reached"
+
+    def test_emits_expired_event_on_sweep(self) -> None:
+        store = MemoryStore()
+        emitter = CreditEventEmitter()
+        mgr = CreditManager(store=store, emitter=emitter)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+
+        events: list[CreditEvent] = []
+        emitter.on("credits.expired", lambda e: events.append(e))
+
+        from datetime import timedelta
+
+        mgr.add_credits("user-1", 100, expires_at=datetime.now() - timedelta(seconds=1))
+        mgr.sweep_expired_credits()
+        assert len(events) == 1
+        assert events[0].data is not None
+        assert events[0].data["expired_count"] == 1
+
+    def test_multiple_handlers_all_fire(self) -> None:
+        store = MemoryStore()
+        emitter = CreditEventEmitter()
+        mgr = CreditManager(store=store, emitter=emitter)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        mgr.add_credits("user-1", 100)
+
+        called: list[int] = []
+        emitter.on("credits.deducted", lambda _: called.append(1))
+        emitter.on("credits.deducted", lambda _: called.append(2))
+
+        mgr.deduct("user-1", UsageMetrics(input_tokens=10))
+        assert len(called) == 2
+
+    def test_unregistered_event_noop(self) -> None:
+        emitter = CreditEventEmitter()
+        # Should not raise
+        emitter.emit(CreditEvent(type="credits.deducted", timestamp=datetime.now(), user_id="u1"))
+
+    def test_off_removes_handler(self) -> None:
+        emitter = CreditEventEmitter()
+        store = MemoryStore()
+        mgr = CreditManager(store=store, emitter=emitter)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        mgr.add_credits("user-1", 100)
+
+        called: list[str] = []
+
+        def handler(e: CreditEvent) -> None:
+            called.append(e.type)
+
+        emitter.on("credits.deducted", handler)
+        emitter.off("credits.deducted", handler)
+
+        mgr.deduct("user-1", UsageMetrics(input_tokens=10))
+        assert len(called) == 0
+
+    def test_emits_cap_warning_on_warn(self) -> None:
+        store = MemoryStore()
+        emitter = CreditEventEmitter()
+        mgr = CreditManager(store=store, emitter=emitter)
+        mgr.publish_pricing_from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+        mgr.add_credits("user-1", 100)
+        store.set_spend_cap(SpendCap(user_id="user-1", type="daily", limit=5, action="warn"))
+
+        events: list[CreditEvent] = []
+        emitter.on("credits.cap_warning", lambda e: events.append(e))
+
+        mgr.deduct("user-1", UsageMetrics(input_tokens=10))
+        assert len(events) == 1
+        assert events[0].type == "credits.cap_warning"

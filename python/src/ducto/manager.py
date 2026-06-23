@@ -32,6 +32,7 @@ from datetime import datetime
 from typing import Any
 
 from ducto.engine import PricingEngine
+from ducto.events import CreditEvent, CreditEventEmitter
 from ducto.interface.base import CreditStore
 from ducto.interface.models import (
     AddCreditsResult,
@@ -68,15 +69,30 @@ class CreditManager:
         engine: An optional pre-configured ``PricingEngine``. If omitted,
             call ``load_pricing_from_store()`` or ``publish_pricing_from_dict()``
             before ``deduct()``.
+        emitter: An optional ``CreditEventEmitter`` for lifecycle events.
     """
 
     def __init__(
         self,
         store: CreditStore,
         engine: PricingEngine | None = None,
+        emitter: CreditEventEmitter | None = None,
     ) -> None:
         self._store = store
         self._engine = engine
+        self._emitter = emitter
+
+    def _emit(self, type_: str, user_id: str, data: dict[str, Any] | None = None) -> None:
+        """Emit a credit lifecycle event. No-op if no emitter is configured."""
+        if self._emitter:
+            self._emitter.emit(
+                CreditEvent(
+                    type=type_,
+                    timestamp=datetime.now(),
+                    user_id=user_id,
+                    data=data,
+                )
+            )
 
     # -- Schema management -----------------------------------------------
 
@@ -136,7 +152,18 @@ class CreditManager:
         expires_at: datetime | None = None,
     ) -> AddCreditsResult:
         """Add credits to a user's account."""
-        return self._store.add_credits(user_id, amount, type, metadata, expires_at)
+        result = self._store.add_credits(user_id, amount, type, metadata, expires_at)
+        self._emit(
+            "credits.added",
+            user_id,
+            {
+                "transaction_id": result.transaction_id,
+                "amount": result.amount,
+                "new_balance": result.new_balance,
+                "type": type,
+            },
+        )
+        return result
 
     def reserve_credits(
         self,
@@ -199,13 +226,23 @@ class CreditManager:
         if cost <= 0:
             # Fully covered by plan allowance — no balance deduction
             balance = self._store.get_balance(user_id)
-            return DeductionResult(
+            result = DeductionResult(
                 transaction_id="",
                 user_id=user_id,
                 amount=0,
                 balance_after=balance.balance,
                 idempotent=False,
             )
+            self._emit(
+                "credits.deducted",
+                user_id,
+                {
+                    "amount": 0,
+                    "balance_after": balance.balance,
+                    "plan_covered": True,
+                },
+            )
+            return result
 
         # ── Spend cap check ────────────────────────────────────────────
         cap_result = self._store.check_spend_cap(
@@ -214,9 +251,31 @@ class CreditManager:
             amount=cost,
         )
         if cap_result.action == "deny":
+            self._emit(
+                "credits.cap_reached",
+                user_id,
+                {
+                    "current_spend": cap_result.current_spend,
+                    "limit": cap_result.cap_limit,
+                    "model": cap_result.model,
+                    "amount": cost,
+                },
+            )
             model_info = f" ({cap_result.model})" if cap_result.model else ""
             raise InsufficientCreditsError(
                 f"Spend cap exceeded: {cap_result.current_spend}/{cap_result.cap_limit}{model_info}"
+            )
+        if cap_result.action in ("warn", "notify"):
+            self._emit(
+                "credits.cap_warning",
+                user_id,
+                {
+                    "current_spend": cap_result.current_spend,
+                    "limit": cap_result.cap_limit,
+                    "model": cap_result.model,
+                    "amount": cost,
+                    "action": cap_result.action,
+                },
             )
 
         # 2) Build transaction metadata (merge user-provided over defaults)
@@ -262,13 +321,38 @@ class CreditManager:
                 f"Credit deduction failed: {deduction.error}. User={user_id}, requested={cost}"
             )
 
-        return DeductionResult(
+        result = DeductionResult(
             transaction_id=deduction.transaction_id,
             user_id=deduction.user_id,
             amount=deduction.amount,
             balance_after=deduction.balance_after,
             idempotent=deduction.idempotent,
         )
+
+        self._emit(
+            "credits.deducted",
+            user_id,
+            {
+                "transaction_id": result.transaction_id,
+                "amount": result.amount,
+                "balance_after": result.balance_after,
+                "model": metrics.model,
+            },
+        )
+
+        # Emit low_balance when balance after deduct is at or below min_balance * 2
+        min_bal = self._engine.min_balance if self._engine else 5
+        if result.balance_after <= min_bal * 2:
+            self._emit(
+                "credits.low_balance",
+                user_id,
+                {
+                    "balance": result.balance_after,
+                    "min_balance": min_bal,
+                },
+            )
+
+        return result
 
     def refund_credits(
         self,
@@ -288,7 +372,19 @@ class CreditManager:
         Returns:
             ``RefundResult`` with the refund transaction details.
         """
-        return self._store.refund_credits(transaction_id, amount, reason, metadata)
+        result = self._store.refund_credits(transaction_id, amount, reason, metadata)
+        self._emit(
+            "credits.refunded",
+            result.user_id,
+            {
+                "transaction_id": transaction_id,
+                "refund_transaction_id": result.refund_transaction_id,
+                "amount": result.amount,
+                "new_balance": result.new_balance,
+                "reason": reason,
+            },
+        )
+        return result
 
     def deduct_team(
         self,
@@ -330,7 +426,20 @@ class CreditManager:
                 team_balance_after=team_bal.balance,
             )
 
-        return self._store.deduct_team(team_id, user_id, cost, metadata)
+        result = self._store.deduct_team(team_id, user_id, cost, metadata)
+        if not result.error:
+            self._emit(
+                "credits.deducted",
+                user_id,
+                {
+                    "transaction_id": result.transaction_id,
+                    "amount": result.amount,
+                    "team_balance_after": result.team_balance_after,
+                    "team_id": team_id,
+                    "deduct_type": "team",
+                },
+            )
+        return result
 
     def sweep_expired_credits(self, dry_run: bool = False) -> SweepResult:
         """Sweep expired credits from all users' balances.
@@ -341,7 +450,17 @@ class CreditManager:
         Returns:
             ``SweepResult`` with expired count and amount.
         """
-        return self._store.sweep_expired_credits(dry_run)
+        result = self._store.sweep_expired_credits(dry_run)
+        if not dry_run and result.expired_count > 0:
+            self._emit(
+                "credits.expired",
+                "system",
+                {
+                    "expired_count": result.expired_count,
+                    "expired_amount": result.expired_amount,
+                },
+            )
+        return result
 
     # ── Usage analytics ─────────────────────────────────────────────────
 

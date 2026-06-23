@@ -18,19 +18,34 @@ import type {
   TopUserRow,
 } from "./types.js";
 import type { CreditStore } from "./stores/credit-store.js";
+import type { CreditEventEmitter, CreditEventType } from "./stores/events.js";
 import { loadConfigFromDict } from "./config.js";
 import type { UsageMetrics } from "./metrics.js";
 
 /**
  * Orchestrates credit operations: pricing -> reserve -> deduct.
+ *
+ * Optionally accepts a ``CreditEventEmitter`` to emit lifecycle events
+ * (deducted, added, refunded, expired, cap_reached, cap_warning, low_balance).
  */
 export class CreditManager {
   private store: CreditStore;
   private engine: PricingEngine | null = null;
+  private emitter: CreditEventEmitter | null = null;
 
-  constructor(store: CreditStore, engine?: PricingEngine | null) {
+  constructor(
+    store: CreditStore,
+    engine?: PricingEngine | null,
+    emitter?: CreditEventEmitter | null,
+  ) {
     this.store = store;
     if (engine) this.engine = engine;
+    if (emitter) this.emitter = emitter;
+  }
+
+  /** Emit a credit lifecycle event. No-op if no emitter is configured. */
+  private emit(type: CreditEventType, userId: string, data?: Record<string, unknown>): void {
+    this.emitter?.emit({ type, timestamp: new Date(), userId, data });
   }
 
   /** Run bundled SQL migrations through the store. */
@@ -104,7 +119,14 @@ export class CreditManager {
     metadata?: CreditMetadata | null,
     expiresAt?: Date | null,
   ): Promise<AddCreditsResult> {
-    return await this.store.addCredits(userId, amount, type, metadata, expiresAt);
+    const result = await this.store.addCredits(userId, amount, type, metadata, expiresAt);
+    this.emit("credits.added", userId, {
+      transactionId: result.transactionId,
+      amount: result.amount,
+      newBalance: result.newBalance,
+      type,
+    });
+    return result;
   }
 
   /** Reserve credits for an upcoming operation. */
@@ -150,21 +172,42 @@ export class CreditManager {
     if (cost <= 0) {
       // Fully covered by plan allowance — no balance deduction
       const balance = await this.store.getBalance(userId);
-      return {
+      const result: DeductionResult = {
         transactionId: "",
         userId,
         amount: 0,
         balanceAfter: balance.balance,
         idempotent: false,
       };
+      this.emit("credits.deducted", userId, {
+        amount: 0,
+        balanceAfter: balance.balance,
+        planCovered: true,
+      });
+      return result;
     }
 
     // ── Spend cap check ────────────────────────────────────────────────
     const capResult = await this.store.checkSpendCap(userId, metrics.model ?? null, cost);
     if (capResult.action === "deny") {
+      this.emit("credits.cap_reached", userId, {
+        currentSpend: capResult.currentSpend,
+        limit: capResult.limit,
+        model: capResult.model ?? undefined,
+        amount: cost,
+      });
       throw new InsufficientCreditsError(
         `Spend cap exceeded: ${capResult.currentSpend}/${capResult.limit}${capResult.model ? " (" + capResult.model + ")" : ""}`,
       );
+    }
+    if (capResult.action === "warn" || capResult.action === "notify") {
+      this.emit("credits.cap_warning", userId, {
+        currentSpend: capResult.currentSpend,
+        limit: capResult.limit,
+        model: capResult.model ?? undefined,
+        amount: cost,
+        action: capResult.action,
+      });
     }
 
     const metaBase: Record<string, unknown> = {
@@ -200,6 +243,23 @@ export class CreditManager {
     );
 
     if (deduction.error) throw new InsufficientCreditsError(deduction.error);
+
+    this.emit("credits.deducted", userId, {
+      transactionId: deduction.transactionId,
+      amount: deduction.amount,
+      balanceAfter: deduction.balanceAfter,
+      model: metrics.model ?? null,
+    });
+
+    // Emit low_balance when balance after deduct is at or below minBalance * 2
+    const minBal = this.engine?.minBalance ?? 5;
+    if (deduction.balanceAfter <= minBal * 2) {
+      this.emit("credits.low_balance", userId, {
+        balance: deduction.balanceAfter,
+        minBalance: minBal,
+      });
+    }
+
     return deduction;
   }
 
@@ -212,7 +272,15 @@ export class CreditManager {
     reason?: string,
     metadata?: CreditMetadata | null,
   ): Promise<RefundResult> {
-    return await this.store.refundCredits(transactionId, amount, reason, metadata);
+    const result = await this.store.refundCredits(transactionId, amount, reason, metadata);
+    this.emit("credits.refunded", result.userId, {
+      transactionId,
+      refundTransactionId: result.refundTransactionId,
+      amount: result.amount,
+      newBalance: result.newBalance,
+      reason: reason ?? null,
+    });
+    return result;
   }
 
   /**
@@ -244,7 +312,17 @@ export class CreditManager {
       };
     }
 
-    return await this.store.deductTeam(teamId, userId, cost, metadata);
+    const result = await this.store.deductTeam(teamId, userId, cost, metadata);
+    if (!result.error) {
+      this.emit("credits.deducted", userId, {
+        transactionId: result.transactionId,
+        amount: result.amount,
+        teamBalanceAfter: result.teamBalanceAfter,
+        teamId,
+        deductType: "team",
+      });
+    }
+    return result;
   }
 
   /**
@@ -266,7 +344,14 @@ export class CreditManager {
    * any balances.
    */
   async sweepExpiredCredits(dryRun?: boolean): Promise<SweepResult> {
-    return await this.store.sweepExpiredCredits(dryRun);
+    const result = await this.store.sweepExpiredCredits(dryRun);
+    if (!dryRun && result.expiredCount > 0) {
+      this.emit("credits.expired", "system", {
+        expiredCount: result.expiredCount,
+        expiredAmount: result.expiredAmount,
+      });
+    }
+    return result;
   }
 
   // ── Usage analytics ──────────────────────────────────────────────────
