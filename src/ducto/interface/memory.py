@@ -120,15 +120,7 @@ class MemoryStore(CreditStore):
         reserved_total = sum(r.amount for r in self._reservations.values() if r.user_id == user_id)
         available = balance - reserved_total
 
-        if available < min_balance:
-            return ReserveResult(
-                reservation_id="",
-                user_id=user_id,
-                amount=0,
-                error="insufficient_credits",
-            )
-
-        if amount > available:
+        if available - amount < min_balance:
             return ReserveResult(
                 reservation_id="",
                 user_id=user_id,
