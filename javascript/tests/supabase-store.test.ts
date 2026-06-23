@@ -7,10 +7,9 @@ describe("HttpxSupabaseStore", () => {
     expect(store).toBeInstanceOf(HttpxSupabaseStore);
   });
 
-  it("strips trailing slash from url", () => {
+  it("strips trailing slash from url", async () => {
     const store = new HttpxSupabaseStore("https://test.supabase.co/", "key");
-    // Access private url through the setup error message
-    expect(() => store.setup()).rejects.toThrow(
+    await expect(store.setup()).rejects.toThrow(
       "HttpxSupabaseStore.setup() requires a database_url",
     );
   });
