@@ -86,6 +86,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
@@ -94,3 +95,15 @@ jobs:
         run: |
           uv build
           uv publish
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - working-directory: javascript
+        run: |
+          npm install
+          npm run build
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
