@@ -1,0 +1,153 @@
+import type {
+  AddCreditsResult,
+  BalanceResult,
+  CreditMetadata,
+  DeductionResult,
+  PricingConfigData,
+  PricingConfigResult,
+  ReserveResult,
+  SetupResult,
+} from "../types.js";
+import type { CreditStore } from "./credit-store.js";
+
+/**
+ * Credit store backed by Supabase RPCs via raw HTTP (fetch).
+ *
+ * No supabase-js dependency — makes direct POST requests to the Supabase REST API.
+ *
+ * Args:
+ *   url: Supabase project URL (e.g. ``https://<project>.supabase.co``).
+ *   key: Supabase ``service_role`` key.
+ */
+export class HttpxSupabaseStore implements CreditStore {
+  private url: string;
+  private key: string;
+
+  constructor(url: string, key: string) {
+    this.url = url.replace(/\/+$/, "");
+    this.key = key;
+  }
+
+  private async rpc(fn: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const resp = await fetch(`${this.url}/rest/v1/rpc/${fn}`, {
+      method: "POST",
+      headers: {
+        "apikey": this.key,
+        "authorization": `Bearer ${this.key}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(params),
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`Supabase RPC ${fn} failed (${resp.status}): ${text}`);
+    }
+    return resp.json() as Promise<Record<string, unknown>>;
+  }
+
+  async setup(_databaseUrl?: string | null): Promise<SetupResult> {
+    throw new Error("HttpxSupabaseStore.setup() requires a database_url — use PostgresStore.setup() instead");
+  }
+
+  async getBalance(userId: string): Promise<BalanceResult> {
+    const row = await this.rpc("get_credits_balance", { p_user_id: userId });
+    return {
+      userId: String(row.user_id ?? userId),
+      balance: Number(row.balance ?? 0),
+      lifetimePurchased: Number(row.lifetime_purchased ?? 0),
+    };
+  }
+
+  async addCredits(
+    userId: string,
+    amount: number,
+    type = "adjustment",
+    metadata?: CreditMetadata | null,
+  ): Promise<AddCreditsResult> {
+    const row = await this.rpc("credits_add", {
+      p_user_id: userId,
+      p_amount: amount,
+      p_type: type,
+      p_metadata: metadata ?? {},
+    });
+    return {
+      transactionId: String(row.id ?? ""),
+      userId: String(row.user_id ?? userId),
+      amount: Number(row.amount ?? amount),
+      newBalance: Number(row.new_balance ?? 0),
+      lifetimePurchased: Number(row.lifetime_purchased ?? 0),
+    };
+  }
+
+  async reserveCredits(
+    userId: string,
+    amount: number,
+    operationType: string,
+    metadata?: CreditMetadata | null,
+    minBalance = 5,
+  ): Promise<ReserveResult> {
+    const row = await this.rpc("reserve_credits", {
+      p_user_id: userId,
+      p_amount: amount,
+      p_operation_type: operationType,
+      p_metadata: metadata ?? {},
+      p_min_balance: minBalance,
+    });
+
+    if ("error" in row) {
+      return { reservationId: "", userId, amount: 0, balance: 0, reservedTotal: 0, error: String(row.error) };
+    }
+
+    return {
+      reservationId: String(row.reservation_id),
+      userId: String(row.user_id ?? userId),
+      amount: Number(row.amount ?? 0),
+      balance: Number(row.balance ?? 0),
+      reservedTotal: Number(row.reserved ?? 0),
+    };
+  }
+
+  async deductCredits(
+    userId: string,
+    reservationId: string,
+    amount: number,
+    idempotencyKey?: string | null,
+    metadata?: CreditMetadata | null,
+  ): Promise<DeductionResult> {
+    const meta: Record<string, unknown> = { ...(metadata ?? {}) };
+    if (idempotencyKey) meta.idempotency_key = idempotencyKey;
+
+    const row = await this.rpc("deduct_credits", {
+      p_user_id: userId,
+      p_reservation_id: reservationId,
+      p_amount: amount,
+      p_metadata: meta,
+    });
+
+    if ("error" in row) {
+      return { transactionId: "", userId, amount: -amount, balanceAfter: 0, idempotent: false, error: String(row.error) };
+    }
+
+    return {
+      transactionId: String(row.id),
+      userId: String(row.user_id ?? userId),
+      amount: Number(row.amount ?? -amount),
+      balanceAfter: Number(row.new_balance ?? 0),
+      idempotent: Boolean(row.idempotent),
+    };
+  }
+
+  async getActivePricing(): Promise<PricingConfigResult | null> {
+    const row = await this.rpc("get_active_pricing_config", {});
+    if (!row || Object.keys(row).length === 0) return null;
+    return row as unknown as PricingConfigResult;
+  }
+
+  async setActivePricing(config: PricingConfigData, label?: string | null): Promise<string> {
+    const row = await this.rpc("set_active_pricing_config", {
+      p_config: config,
+      p_label: label ?? null,
+    });
+    return String(row.id ?? "");
+  }
+}

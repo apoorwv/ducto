@@ -1,0 +1,193 @@
+import type {
+  AddCreditsResult,
+  BalanceResult,
+  CreditMetadata,
+  DeductionResult,
+  PricingConfigData,
+  PricingConfigResult,
+  ReserveResult,
+  SetupResult,
+} from "../types.js";
+import type { CreditStore } from "./credit-store.js";
+
+/**
+ * Minimal interface for a PG pool (real or mock).
+ */
+export interface PgPool {
+  query(text: string, params?: unknown[]): Promise<{ rows: unknown[] }>;
+  end(): Promise<void>;
+}
+
+export interface PgPoolConstructor {
+  new (config: { connectionString: string }): PgPool;
+}
+
+/**
+ * Credit store backed by a raw Postgres connection.
+ *
+ * Uses dependency injection for the PG pool constructor — supply a real ``pg.Pool``
+ * for production, or a mock for tests.
+ *
+ * Args:
+ *   databaseUrl: Postgres connection string.
+ *   poolCtor: Optional PG Pool constructor (default: loads ``pg`` on first use).
+ */
+export class PostgresStore implements CreditStore {
+  private databaseUrl: string;
+  private poolCtor: PgPoolConstructor;
+
+  constructor(databaseUrl: string, poolCtor?: PgPoolConstructor) {
+    this.databaseUrl = databaseUrl;
+    this.poolCtor = poolCtor ?? null!; // lazy-loaded
+  }
+
+  private async getPoolCtor(): Promise<PgPoolConstructor> {
+    if (this.poolCtor) return this.poolCtor;
+    const mod = await import("pg");
+    this.poolCtor = mod.Pool as unknown as PgPoolConstructor;
+    return this.poolCtor;
+  }
+
+  private async query(text: string, params?: unknown[]): Promise<unknown[]> {
+    const Pool = await this.getPoolCtor();
+    const pool = new Pool({ connectionString: this.databaseUrl });
+    try {
+      const res = await pool.query(text, params);
+      return res.rows;
+    } finally {
+      await pool.end();
+    }
+  }
+
+  private async callproc(name: string, params: unknown[]): Promise<unknown[]> {
+    const placeholders = params.map((_, i) => `$${i + 1}`).join(", ");
+    return await this.query(`SELECT * FROM ${name}(${placeholders})`, params);
+  }
+
+  async setup(_databaseUrl?: string | null): Promise<SetupResult> {
+    const result: SetupResult = { tablesCreated: [], rpcsCreated: [], errors: [], success: true };
+    // Run bundled SQL migrations — in a real package these would be embedded files
+    // Here we expose the setup API; actual migration files belong in the consuming project
+    return result;
+  }
+
+  async getBalance(userId: string): Promise<BalanceResult> {
+    const rows = await this.callproc("get_credits_balance", [userId]);
+    if (!rows || rows.length === 0) {
+      return { userId, balance: 0, lifetimePurchased: 0 };
+    }
+    const row = rows[0] as Record<string, unknown>;
+    return {
+      userId: String(row.user_id ?? userId),
+      balance: Number(row.balance ?? 0),
+      lifetimePurchased: Number(row.lifetime_purchased ?? 0),
+    };
+  }
+
+  async addCredits(
+    userId: string,
+    amount: number,
+    type = "adjustment",
+    metadata?: CreditMetadata | null,
+  ): Promise<AddCreditsResult> {
+    const rows = await this.callproc("credits_add", [
+      userId,
+      amount,
+      type,
+      JSON.stringify(metadata ?? {}),
+    ]);
+    const row = (rows?.[0] ?? {}) as Record<string, unknown>;
+    return {
+      transactionId: String(row.id ?? ""),
+      userId: String(row.user_id ?? userId),
+      amount: Number(row.amount ?? amount),
+      newBalance: Number(row.new_balance ?? 0),
+      lifetimePurchased: Number(row.lifetime_purchased ?? 0),
+    };
+  }
+
+  async reserveCredits(
+    userId: string,
+    amount: number,
+    operationType: string,
+    metadata?: CreditMetadata | null,
+    minBalance = 5,
+  ): Promise<ReserveResult> {
+    const rows = await this.callproc("reserve_credits", [
+      userId,
+      amount,
+      operationType,
+      JSON.stringify(metadata ?? {}),
+      minBalance,
+    ]);
+
+    if (!rows || rows.length === 0) {
+      return { reservationId: "", userId, amount: 0, balance: 0, reservedTotal: 0, error: "no result" };
+    }
+
+    const row = (rows[0] as Record<string, unknown>) ?? {};
+    if ("error" in row) {
+      return { reservationId: "", userId, amount: 0, balance: 0, reservedTotal: 0, error: String(row.error) };
+    }
+
+    return {
+      reservationId: String(row.reservation_id ?? ""),
+      userId: String(row.user_id ?? userId),
+      amount: Number(row.amount ?? 0),
+      balance: Number(row.balance ?? 0),
+      reservedTotal: Number(row.reserved ?? 0),
+    };
+  }
+
+  async deductCredits(
+    userId: string,
+    reservationId: string,
+    amount: number,
+    idempotencyKey?: string | null,
+    metadata?: CreditMetadata | null,
+  ): Promise<DeductionResult> {
+    const meta: Record<string, unknown> = { ...(metadata ?? {}) };
+    if (idempotencyKey) meta.idempotency_key = idempotencyKey;
+
+    const rows = await this.callproc("deduct_credits", [
+      userId,
+      reservationId,
+      amount,
+      JSON.stringify(meta),
+    ]);
+
+    if (!rows || rows.length === 0) {
+      return { transactionId: "", userId, amount: -amount, balanceAfter: 0, idempotent: false, error: "no result" };
+    }
+
+    const row = (rows[0] as Record<string, unknown>) ?? {};
+    if ("error" in row) {
+      return { transactionId: "", userId, amount: -amount, balanceAfter: 0, idempotent: false, error: String(row.error) };
+    }
+
+    return {
+      transactionId: String(row.id ?? ""),
+      userId: String(row.user_id ?? userId),
+      amount: Number(row.amount ?? -amount),
+      balanceAfter: Number(row.new_balance ?? 0),
+      idempotent: Boolean(row.idempotent),
+    };
+  }
+
+  async getActivePricing(): Promise<PricingConfigResult | null> {
+    const rows = await this.callproc("get_active_pricing_config", []);
+    if (!rows || rows.length === 0) return null;
+    const row = rows[0] as Record<string, unknown> | undefined;
+    if (!row || !row.config) return null;
+    return row as unknown as PricingConfigResult;
+  }
+
+  async setActivePricing(config: PricingConfigData, label?: string | null): Promise<string> {
+    const rows = await this.callproc("set_active_pricing_config", [
+      JSON.stringify(config),
+      label ?? null,
+    ]);
+    const row = (rows?.[0] ?? {}) as Record<string, unknown>;
+    return String(row.id ?? "");
+  }
+}

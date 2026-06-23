@@ -1,0 +1,48 @@
+{
+  "name": "@apoorwv/ducto",
+  "version": "0.1.3",
+  "description": "Declarative credit calculation engine for AI SaaS platforms",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist/"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && vitest run"
+  },
+  "keywords": [
+    "credits",
+    "billing",
+    "llm",
+    "usage-metering",
+    "pricing"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/apoorwv/ducto.git"
+  },
+  "bugs": {
+    "url": "https://github.com/apoorwv/ducto/issues"
+  },
+  "homepage": "https://github.com/apoorwv/ducto#readme",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.20.0",
+    "js-yaml": "^4.2.0",
+    "pg": "^8.22.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
