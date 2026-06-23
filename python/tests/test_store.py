@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -240,9 +240,7 @@ class TestUsageAnalytics:
         r3 = store.reserve_credits("user_2", 200, "usage")
         store.deduct_credits("user_2", r3.reservation_id, 200)
 
-        from datetime import timedelta
-
-        now = __import__("datetime").datetime.now()
+        now = datetime.now()
         rows = store.spend_by_user(now - timedelta(seconds=10), now + timedelta(seconds=10))
 
         assert len(rows) == 2
@@ -264,9 +262,7 @@ class TestUsageAnalytics:
         r2 = store.reserve_credits("user_1", 50, "usage")
         store.deduct_credits("user_1", r2.reservation_id, 50, metadata=CreditMetadata(model="claude-3"))
 
-        from datetime import timedelta
-
-        now = __import__("datetime").datetime.now()
+        now = datetime.now()
         rows = store.spend_by_model(now - timedelta(seconds=10), now + timedelta(seconds=10))
         gpt4 = next((r for r in rows if r.model == "gpt-4"), None)
         assert gpt4 is not None
@@ -279,8 +275,8 @@ class TestUsageAnalytics:
         store.deduct_credits("user_1", r.reservation_id, 10)
 
         rows = store.spend_by_user(
-            __import__("datetime").datetime(2020, 1, 1),
-            __import__("datetime").datetime(2020, 1, 2),
+            datetime(2020, 1, 1),
+            datetime(2020, 1, 2),
         )
         assert len(rows) == 0
 
@@ -294,9 +290,7 @@ class TestUsageAnalytics:
             r = store.reserve_credits(uid, amt, "usage")
             store.deduct_credits(uid, r.reservation_id, amt)
 
-        from datetime import timedelta
-
-        now = __import__("datetime").datetime.now()
+        now = datetime.now()
         top = store.top_users(2, now - timedelta(seconds=10), now + timedelta(seconds=10))
         assert len(top) == 2
         assert top[0].total_spend >= top[1].total_spend
@@ -307,9 +301,7 @@ class TestUsageAnalytics:
         r = store.reserve_credits("user_1", 75, "usage")
         store.deduct_credits("user_1", r.reservation_id, 75)
 
-        from datetime import timedelta
-
-        now = __import__("datetime").datetime.now()
+        now = datetime.now()
         rows = store.daily_spend(now - timedelta(days=1), now + timedelta(days=1))
         assert len(rows) >= 1
         assert rows[0].total_spend == 75
