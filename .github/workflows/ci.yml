@@ -20,7 +20,8 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install ruff
-      - run: ruff check src/ tests/ scripts/
+      - working-directory: python
+        run: ruff check src/ tests/ scripts/
 
   typecheck:
     runs-on: ubuntu-latest
@@ -29,8 +30,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: pip install -e ".[test,postgres,supabase]"
-      - run: pyright src/
+      - run: pip install -e "python/[test,postgres,supabase]"
+      - working-directory: python
+        run: pyright src/
 
   test:
     runs-on: ubuntu-latest
@@ -48,12 +50,37 @@ jobs:
           sudo curl -sL -o /usr/local/bin/pg_tmp \
             https://raw.githubusercontent.com/eradman/ephemeralpg/e6631785b1fd189c4d7a5118ec4f3db018a71212/pg_tmp.sh
           sudo chmod +x /usr/local/bin/pg_tmp
-      - run: pip install -e ".[test,postgres,supabase]"
-      - run: pytest
+      - run: pip install -e "python/[test,postgres,supabase]"
+      - working-directory: python
+        run: pytest
+
+  js-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - working-directory: javascript
+        run: |
+          npm install
+          npx vitest run
+
+  js-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - working-directory: javascript
+        run: |
+          npm install
+          npx tsc --noEmit
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [lint, typecheck, test]
+    needs: [lint, typecheck, test, js-test, js-typecheck]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -63,5 +90,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install uv
-      - run: uv build
-      - run: uv publish
+      - working-directory: python
+        run: |
+          uv build
+          uv publish
