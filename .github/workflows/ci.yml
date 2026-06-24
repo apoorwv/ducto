@@ -56,6 +56,20 @@ jobs:
 
   js-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ducto_test
+          POSTGRES_USER: ducto
+          POSTGRES_PASSWORD: ducto
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
@@ -64,7 +78,7 @@ jobs:
       - working-directory: javascript
         run: |
           npm install
-          npx vitest run
+          DATABASE_URL="postgres://ducto:ducto@localhost:5432/ducto_test" npx vitest run
 
   js-typecheck:
     runs-on: ubuntu-latest
