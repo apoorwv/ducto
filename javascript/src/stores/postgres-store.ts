@@ -90,16 +90,14 @@ export class PostgresStore implements CreditStore {
     const rows = await this.query(`SELECT * FROM ${name}(${placeholders})`, params);
     // Functions return JSONB — PG wraps result as {funcname: jsonb_string}
     // Unwrap by parsing the first column of each row
+    // Functions return JSONB — PG wraps result as {funcname: parsed_object}.
+    // Unwrap by extracting the first column value (the actual result object).
     if (rows.length > 0) {
-      const firstCol = Object.keys(rows[0] as Record<string, unknown>)[0];
-      const val = (rows[0] as Record<string, unknown>)[firstCol];
-      if (typeof val === "string") {
-        try {
-          const parsed = JSON.parse(val);
-          return Array.isArray(parsed) ? parsed : [parsed];
-        } catch {
-          return rows;
-        }
+      const row = rows[0] as Record<string, unknown>;
+      const firstCol = Object.keys(row)[0];
+      // For JSONB results, pg returns a single object-valued column
+      if (typeof row[firstCol] === "object" && row[firstCol] !== null) {
+        return [row[firstCol]];
       }
     }
     return rows;
