@@ -15,6 +15,7 @@ const config: Config = {
 
   onBrokenLinks: 'throw',
   markdown: {
+    format: 'detect',
     hooks: {
       onBrokenMarkdownLinks: 'warn',
     },
@@ -24,6 +25,18 @@ const config: Config = {
     defaultLocale: 'en',
     locales: ['en'],
   },
+
+  plugins: [
+    [
+      'docusaurus-plugin-typedoc',
+      {
+        entryPoints: ['../javascript/src/index.ts'],
+        tsconfig: '../javascript/tsconfig.json',
+        out: 'docs/javascript-api/reference',
+        sidebar: {autoConfiguration: false},
+      },
+    ],
+  ],
 
   presets: [
     [
