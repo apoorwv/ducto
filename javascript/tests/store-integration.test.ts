@@ -48,6 +48,7 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
           CREATE ROLE authenticated;
           CREATE FUNCTION auth.uid() RETURNS uuid
           LANGUAGE SQL IMMUTABLE AS $func$ SELECT '00000000-0000-0000-0000-000000000000'::uuid $func$;
+          INSERT INTO auth.users (id) VALUES ('00000000-0000-0000-0000-000000000001') ON CONFLICT DO NOTHING;
         END IF;
       END
       $$;
