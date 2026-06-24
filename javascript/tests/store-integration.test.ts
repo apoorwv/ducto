@@ -64,10 +64,7 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
     }
   }, 30000);
 
-  let testNum = 0;
-
   afterEach(async () => {
-    testNum++;
     // Clean up test data between tests to avoid state leakage
     if (pool) {
       await pool.query("DELETE FROM public.credit_reservations");
