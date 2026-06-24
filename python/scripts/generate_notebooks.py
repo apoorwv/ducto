@@ -289,8 +289,8 @@ for u in users:
 
 print(f"Seeded {3} users × 7 days of random transactions")"""),
         md("""### Spend by user (last 30 days)"""),
-        code("""from datetime import timedelta
-end = datetime.utcnow()
+        code("""from datetime import timedelta, timezone
+end = datetime.now(timezone.utc)
 start = end - timedelta(days=30)
 rows = store.spend_by_user(start, end)
 for r in rows:
