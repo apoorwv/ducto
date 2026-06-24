@@ -2,11 +2,10 @@
 
 The pricing config is stored in the `credit_pricing_config` table or loaded from a dict.
 
-## Version 1 (v1) — Flat Pricing
+## Flat Pricing
 
 ```json
 {
-  "version": 1,
   "models": {
     "gpt-4": "input_tokens * 0.01 + output_tokens * 0.03",
     "_default": "input_tokens * 0.001 + output_tokens * 0.003"
@@ -22,13 +21,12 @@ The pricing config is stored in the `credit_pricing_config` table or loaded from
 }
 ```
 
-## Version 2 (v2) — Plan-Based Pricing
+## Plan-Based Pricing
 
-Extends v1 with subscription plan definitions. Plans give users free monthly allowances, rate overrides, and feature gating metadata.
+Extends flat pricing with subscription plan definitions. Plans give users free monthly allowances, rate overrides, and feature gating metadata.
 
 ```json
 {
-  "version": 2,
   "models": {
     "_default": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)"
   },
@@ -110,8 +108,8 @@ Minimum balance floor (default 5).
 ```python
 from ducto import PricingEngine
 
-# From dict (v1 or v2)
-engine = PricingEngine.from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+# From dict
+engine = PricingEngine.from_dict({"models": {"_default": "input_tokens * 1"}})
 
 # From file (YAML/JSON)
 import yaml
@@ -122,7 +120,7 @@ with open("pricing.yaml") as f:
 ```typescript
 import { PricingEngine, loadPricingFile } from "@apoorwv/ducto";
 
-const engine = PricingEngine.fromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+const engine = PricingEngine.fromDict({ models: { _default: "input_tokens * 1" } });
 
 const data = await loadPricingFile("./pricing.yaml");
 const engine2 = PricingEngine.fromDict(data);
@@ -142,10 +140,9 @@ ducto pricing set config.json
 
 At load time the engine validates:
 
-1. Version field (`1` or `2`)
-2. `models` is non-empty
-3. All expression strings parse and are safe
-4. Only allowed functions used
-5. Plan names are unique (v2)
-6. Plan `rate_overrides` expressions are valid (v2)
-7. No unknown sections
+1. `models` is non-empty
+2. All expression strings parse and are safe
+3. Only allowed functions used
+4. Plan names are unique
+5. Plan `rate_overrides` expressions are valid
+6. No unknown sections

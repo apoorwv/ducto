@@ -26,7 +26,6 @@ const manager = new CreditManager(store, engine, emitter);
 
 ```typescript
 manager.publishPricingFromDict({
-  version: 1,
   models: { "_default": "input_tokens * (0.001 / 1000)" },
 });
 ```
@@ -77,7 +76,6 @@ Example — full plan coverage skips balance deduction:
 
 ```typescript
 manager.publishPricingFromDict({
-  version: 2,
   models: { "_default": "input_tokens * 1" },
   plans: { free: { id: "free", name: "Free", freeAllowance: 100 } },
 });

@@ -9,7 +9,6 @@ import { PricingEngine } from "@apoorwv/ducto";
 
 // From a dict (testing, stateless)
 const engine = PricingEngine.fromDict({
-  version: 1,
   models: {
     "gpt-4": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)",
     "_default": "input_tokens * (0.001 / 1000) + output_tokens * (0.003 / 1000)",

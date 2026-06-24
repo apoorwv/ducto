@@ -48,6 +48,6 @@ describe("HttpxSupabaseStore", () => {
 
   it("setActivePricing rejects with network error (no server)", async () => {
     const store = new HttpxSupabaseStore("https://localhost:1", "key");
-    await expect(store.setActivePricing({ version: 1, models: { a: "1" } })).rejects.toThrow();
+    await expect(store.setActivePricing({ models: { a: "1" } })).rejects.toThrow();
   });
 });

@@ -245,7 +245,7 @@ class TestHttpxSupabaseStoreIntegration:
     def test_get_active_pricing(self, store: HttpxSupabaseStore) -> None:
         self._mock_post(
             store,
-            {"id": "1", "config": {"version": 1, "models": {"a": "b"}}, "is_active": True},
+            {"id": "1", "config": {"models": {"a": "b"}}, "is_active": True},
         )
         result = store.get_active_pricing()
         assert result is not None

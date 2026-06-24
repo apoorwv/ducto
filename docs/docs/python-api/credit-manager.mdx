@@ -27,7 +27,6 @@ manager = CreditManager(store=store, engine=engine, emitter=emitter)
 
 ```python
 manager.publish_pricing_from_dict({
-    "version": 1,
     "models": {"_default": "input_tokens * (0.001 / 1000)"},
 })
 ```
@@ -77,12 +76,11 @@ Get remaining free allowance for the current billing period.
 Example — full plan coverage skips balance deduction:
 
 ```python
-v2 = PricingConfigV2(
-    version=2,
+config = PricingConfigData(
     models={"_default": "input_tokens * 1"},
     plans={"free": PlanDefinition(id="free", name="Free", free_allowance=100)},
 )
-store.set_active_pricing(v2)
+store.set_active_pricing(config)
 store.set_user_plan("user_1", "free")
 store.add_credits("user_1", 10)
 

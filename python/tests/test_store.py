@@ -54,7 +54,7 @@ def test_load_pricing_file_yaml(tmp_path) -> None:
     from ducto.__main__ import _load_pricing_file
 
     f = tmp_path / "pricing.yaml"
-    f.write_text("version: 1\nmodels:\n  _default: input_tokens * 1\n")
+    f.write_text("models:\n  _default: input_tokens * 1\n")
     data = _load_pricing_file(str(f))
     assert data["models"]["_default"] == "input_tokens * 1"
 
