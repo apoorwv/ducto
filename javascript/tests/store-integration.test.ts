@@ -49,6 +49,7 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
           CREATE FUNCTION auth.uid() RETURNS uuid
           LANGUAGE SQL IMMUTABLE AS $func$ SELECT '00000000-0000-0000-0000-000000000000'::uuid $func$;
           INSERT INTO auth.users (id) VALUES ('00000000-0000-0000-0000-000000000001') ON CONFLICT DO NOTHING;
+          INSERT INTO auth.users (id) VALUES ('00000000-0000-0000-0000-000000000099') ON CONFLICT DO NOTHING;
         END IF;
       END
       $$;
@@ -111,9 +112,9 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
     const manager = new CreditManager(store);
     await manager.publishPricingFromDict(TEST_PRICING);
 
-    await expect(() => manager.deduct("no-funds-user", METRICS)).rejects.toThrow(
-      "Credit reservation failed",
-    );
+    await expect(() =>
+      manager.deduct("00000000-0000-0000-0000-000000000099", METRICS),
+    ).rejects.toThrow("insufficient_credits");
   });
 
   it("reserve and deduct flow", async () => {
