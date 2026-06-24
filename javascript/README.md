@@ -151,6 +151,60 @@ const result = await manager.deduct("user-1", { inputTokens: 5 });
 console.log(result.amount); // 0 — covered by allowance
 ```
 
+## Feature Examples
+
+### Refunds
+
+```typescript
+const tx = await manager.deduct("user-1", { model: "gpt-4", inputTokens: 100 });
+const refund = await manager.refundCredits(tx.transactionId);             // full refund
+const partial = await manager.refundCredits(tx.transactionId, 5);         // partial
+```
+
+### Credit expiry
+
+```typescript
+await manager.addCredits("user-1", 100, "purchase", null, new Date("2025-01-01"));
+const result = await manager.sweepExpiredCredits();                        // sweep
+const report = await manager.sweepExpiredCredits(true);                    // preview only
+```
+
+### Team / shared balances
+
+```typescript
+const team = await store.createTeam("Engineering", 5000);
+await store.addTeamMember(team.teamId, "user-1", "admin", 1000);
+const result = await manager.deductTeam(team.teamId, "user-1", { model: "gpt-4", inputTokens: 500 });
+```
+
+### Spend caps
+
+```typescript
+store.setSpendCap({ userId: "user-1", type: "daily", limit: 100, action: "deny" });
+```
+
+### Usage analytics
+
+```typescript
+const now = new Date();
+const start = new Date(now.getTime() - 30 * 86400000);
+await manager.spendByUser(start, now);                                     // per-user totals
+await manager.spendByModel(start, now);                                     // per-model spend
+await manager.topUsers(10, start, now);                                     // top 10 users
+await manager.dailySpend(start, now);                                       // daily buckets
+await manager.aggregateStats(start, now);                                   // aggregate summary
+```
+
+### Events
+
+```typescript
+import { CreditEventEmitter } from "@apoorwv/ducto";
+const emitter = new CreditEventEmitter();
+const manager = new CreditManager(store, null, emitter);
+emitter.on("credits.deducted", (e) => console.log(`User ${e.userId} spent credits`));
+emitter.on("credits.low_balance", (e) => sendAlert(e.userId, e.data?.balance));
+```
+
 ## Pricing Configuration
 
 Version 1 example:

@@ -169,6 +169,61 @@ print(f"Deducted {abs(result.amount)} credits. Balance: {result.balance_after}")
 }
 ```
 
+## Feature Examples
+
+### Refunds
+
+```python
+tx = manager.deduct("user_abc", UsageMetrics(model="gpt-4", input_tokens=500))
+refund = manager.refund_credits(tx.transaction_id)                     # full refund
+partial = manager.refund_credits(tx.transaction_id, amount=5)          # partial
+```
+
+### Credit expiry
+
+```python
+manager.add_credits("user_abc", 100, "purchase", expires_at=datetime(2025, 1, 1))
+result = manager.sweep_expired_credits()                                 # sweep
+report = manager.sweep_expired_credits(dry_run=True)                     # preview only
+```
+
+### Team / shared balances
+
+```python
+team = store.create_team("Engineering", initial_balance=5000)
+store.add_team_member(team.team_id, "user_abc", role="admin", spend_cap=1000)
+result = manager.deduct_team(team.team_id, "user_abc", UsageMetrics(model="gpt-4", input_tokens=500))
+```
+
+### Spend caps
+
+```python
+from ducto.interface.models import SpendCap
+store.set_spend_cap(SpendCap(user_id="user_abc", cap_type="daily", limit=100, action="deny"))
+```
+
+### Usage analytics
+
+```python
+from datetime import datetime, timedelta
+now = datetime.now()
+rows = manager.spend_by_user(now - timedelta(days=30), now)             # per-user totals
+rows = manager.spend_by_model(now - timedelta(days=30), now)             # per-model spend
+rows = manager.top_users(10, now - timedelta(days=30), now)              # top 10 users
+rows = manager.daily_spend(now - timedelta(days=30), now)                # daily buckets
+stats = manager.aggregate_stats(now - timedelta(days=30), now)           # aggregate summary
+```
+
+### Events
+
+```python
+from ducto.events import CreditEventEmitter
+emitter = CreditEventEmitter()
+manager = CreditManager(store=store, emitter=emitter)
+emitter.on("credits.deducted", lambda e: print(f"User {e.user_id} spent credits"))
+emitter.on("credits.low_balance", lambda e: send_alert(e.user_id, e.data["balance"]))
+```
+
 ### Expression syntax
 
 | Feature | Example |

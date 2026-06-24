@@ -97,3 +97,98 @@ from ducto import PricingEngine, UsageMetrics
 engine = PricingEngine.from_dict({"version": 1, "models": {"_default": "input_tokens * 0.001"}})
 cost = engine.calculate(UsageMetrics(model="gpt-4", input_tokens=500, output_tokens=200))
 ```
+
+## Feature Examples
+
+### Refunds
+
+```python
+tx = manager.deduct("user_abc", UsageMetrics(model="gpt-4", input_tokens=500))
+refund = manager.refund_credits(tx.transaction_id)                    # full refund
+partial = manager.refund_credits(tx.transaction_id, amount=5)         # partial
+```
+
+```typescript
+const tx = await manager.deduct("user_abc", { model: "gpt-4", inputTokens: 500 });
+const refund = await manager.refundCredits(tx.transactionId);           // full refund
+const partial = await manager.refundCredits(tx.transactionId, 5);       // partial
+```
+
+### Credit expiry
+
+```python
+manager.add_credits("user_abc", 100, "purchase", expires_at=datetime(2025, 1, 1))
+result = manager.sweep_expired_credits()                               # sweep
+report = manager.sweep_expired_credits(dry_run=True)                   # preview only
+```
+
+```typescript
+await manager.addCredits("user_abc", 100, "purchase", null, new Date("2025-01-01"));
+const result = await manager.sweepExpiredCredits();                      // sweep
+const report = await manager.sweepExpiredCredits(true);                  // preview only
+```
+
+### Team / shared balances
+
+```python
+team = store.create_team("Engineering", initial_balance=5000)
+store.add_team_member(team.team_id, "user_abc", role="admin", spend_cap=1000)
+result = manager.deduct_team(team.team_id, "user_abc", UsageMetrics(model="gpt-4", input_tokens=500))
+```
+
+```typescript
+const team = await store.createTeam("Engineering", 5000);
+await store.addTeamMember(team.teamId, "user_abc", "admin", 1000);
+const result = await manager.deductTeam(team.teamId, "user_abc", { model: "gpt-4", inputTokens: 500 });
+```
+
+### Spend caps
+
+```python
+from ducto.interface.models import SpendCap
+store.set_spend_cap(SpendCap(user_id="user_abc", cap_type="daily", limit=100, action="deny"))
+```
+
+```typescript
+store.setSpendCap({ userId: "user_abc", type: "daily", limit: 100, action: "deny" });
+```
+
+### Usage analytics
+
+```python
+from datetime import datetime, timedelta
+now = datetime.now()
+rows = manager.spend_by_user(now - timedelta(days=30), now)           # per-user totals
+rows = manager.spend_by_model(now - timedelta(days=30), now)           # per-model spend
+rows = manager.top_users(10, now - timedelta(days=30), now)            # top 10 users
+rows = manager.daily_spend(now - timedelta(days=30), now)              # daily buckets
+stats = manager.aggregate_stats(now - timedelta(days=30), now)         # aggregate summary
+```
+
+```typescript
+const now = new Date();
+const start = new Date(now.getTime() - 30 * 86400000);
+await manager.spendByUser(start, now);                                  // per-user totals
+await manager.spendByModel(start, now);                                  // per-model spend
+await manager.topUsers(10, start, now);                                  // top 10 users
+await manager.dailySpend(start, now);                                    // daily buckets
+await manager.aggregateStats(start, now);                                // aggregate summary
+```
+
+### Events
+
+```python
+from ducto.events import CreditEvent, CreditEventEmitter
+emitter = CreditEventEmitter()
+manager = CreditManager(store=store, emitter=emitter)
+emitter.on("credits.deducted", lambda e: print(f"User {e.user_id} spent credits"))
+emitter.on("credits.low_balance", lambda e: send_alert(e.user_id, e.data["balance"]))
+```
+
+```typescript
+import { CreditEventEmitter } from "@apoorwv/ducto";
+const emitter = new CreditEventEmitter();
+const manager = new CreditManager(store, null, emitter);
+emitter.on("credits.deducted", (e) => console.log(`User ${e.userId} spent credits`));
+emitter.on("credits.low_balance", (e) => sendAlert(e.userId, e.data?.balance));
+```
