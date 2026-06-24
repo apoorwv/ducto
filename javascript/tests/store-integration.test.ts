@@ -137,8 +137,9 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
     const reserve = await manager.reserveCredits(PG_USER, 30, "usage");
     expect(reserve.amount).toBe(30);
 
-    // Over-reserve should be rejected
+    // Reserve only checks min_balance floor, not balance limit (checked at deduct) — 999 can reserve
     const over = await manager.reserveCredits(PG_USER, 999, "usage");
-    expect(over.error).toBeTruthy();
+    expect(over.amount).toBe(999);
+    expect(over.reservationId).toBeTruthy();
   });
 });
