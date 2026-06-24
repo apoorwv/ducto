@@ -32,7 +32,7 @@ from ducto.interface.models import (
     SweepResult,
     TeamBalanceResult,
     TeamDeductionResult,
-    TeamMemberResult,
+    TeamMember,
     TopUserRow,
 )
 
@@ -326,14 +326,14 @@ class CreditStore(ABC):
         ...
 
     @abstractmethod
-    def get_team_members(self, team_id: str) -> list[TeamMemberResult]:
+    def get_team_members(self, team_id: str) -> list[TeamMember]:
         """List all members of a team.
 
         Args:
             team_id: The team's UUID.
 
         Returns:
-            List of ``TeamMemberResult``.
+            List of ``TeamMember``.
         """
         ...
 

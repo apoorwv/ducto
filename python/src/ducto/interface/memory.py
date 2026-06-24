@@ -33,7 +33,7 @@ from ducto.interface.models import (
     SweepResult,
     TeamBalanceResult,
     TeamDeductionResult,
-    TeamMemberResult,
+    TeamMember,
     TopUserRow,
 )
 
@@ -616,12 +616,12 @@ class MemoryStore(CreditStore):
             team["member_count"] = len(members)
         return AddTeamMemberResult(team_id=team_id, user_id=user_id, role=role)
 
-    def get_team_members(self, team_id: str) -> list[TeamMemberResult]:
+    def get_team_members(self, team_id: str) -> list[TeamMember]:
         members = self._team_members.get(team_id)
         if not members:
             return []
         return [
-            TeamMemberResult(
+            TeamMember(
                 user_id=m["user_id"],
                 role=m["role"],
                 spend_cap=m.get("spend_cap"),

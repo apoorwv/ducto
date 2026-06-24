@@ -32,7 +32,7 @@ from ducto.interface.models import (
     SweepResult,
     TeamBalanceResult,
     TeamDeductionResult,
-    TeamMemberResult,
+    TeamMember,
     TopUserRow,
 )
 from ducto.sql import _get_sql_files
@@ -472,10 +472,10 @@ class HttpxSupabaseStore(CreditStore):
             role=str(row.get("role", role)),
         )
 
-    def get_team_members(self, team_id: str) -> list[TeamMemberResult]:
+    def get_team_members(self, team_id: str) -> list[TeamMember]:
         rows = self._rpc_list("get_team_members", {"p_team_id": team_id})
         return [
-            TeamMemberResult(
+            TeamMember(
                 user_id=str(r.get("user_id", "")),
                 role=str(r.get("role", "member")),
                 spend_cap=r.get("spend_cap"),
