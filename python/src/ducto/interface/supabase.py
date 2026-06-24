@@ -69,7 +69,7 @@ def run_migrations(database_url: str) -> SetupResult:
                     ) THEN
                         CREATE SCHEMA IF NOT EXISTS auth;
                         CREATE FUNCTION auth.role() RETURNS text
-                        LANGUAGE SQL IMMUTABLE AS $$ SELECT 'service_role'::text $$;
+                        LANGUAGE SQL IMMUTABLE AS $func$ SELECT 'service_role'::text $func$;
                     END IF;
                 END
                 $$;
