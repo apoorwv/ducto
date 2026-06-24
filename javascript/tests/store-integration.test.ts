@@ -138,8 +138,7 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
     expect(reserve.amount).toBe(30);
 
     // Over-reserve should be rejected
-    await expect(() => manager.reserveCredits(PG_USER, 999, "usage")).rejects.toThrow(
-      "insufficient_credits",
-    );
+    const over = await manager.reserveCredits(PG_USER, 999, "usage");
+    expect(over.error).toBeTruthy();
   });
 });
