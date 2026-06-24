@@ -59,6 +59,7 @@ The `tools`, `search`, and `cache` sections follow the same pattern: each key ma
 # claude-sonnet-4: input 3 credits per token, output 15 credits per token.
 # claude-haiku-3.5: input 1 credit per token, output 4 credits per token.
 config = {
+    "version": 1,
     "models": {
         "gpt-4o": "input_tokens * 5 + output_tokens * 15",
         "claude-sonnet-4": "input_tokens * 3 + output_tokens * 15",

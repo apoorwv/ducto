@@ -74,6 +74,7 @@ Requires Python 3.11+.
 from ducto import PricingEngine, UsageMetrics
 
 engine = PricingEngine.from_dict({
+    "version": 1,
     "models": {"_default": "input_tokens * 0.001 + output_tokens * 0.003"},
 })
 
@@ -97,6 +98,7 @@ Creates all tables (`user_credits`, `credit_transactions`, `credit_reservations`
 ```bash
 ducto pricing set - <<'JSON'
 {
+  "version": 1,
   "models": { "_default": "input_tokens * 0.01 + output_tokens * 0.03" },
   "plans": {
     "free": { "id": "free", "name": "Free Tier", "free_allowance": 50000 },
@@ -131,6 +133,7 @@ print(f"Deducted {abs(result.amount)} credits. Balance: {result.balance_after}")
 
 ```json
 {
+  "version": 1,
   "models": {
     "gpt-4": "input_tokens * 0.01 + output_tokens * 0.03",
     "_default": "input_tokens * 0.001 + output_tokens * 0.003"
@@ -147,6 +150,7 @@ print(f"Deducted {abs(result.amount)} credits. Balance: {result.balance_after}")
 
 ```json
 {
+  "version": 1,
   "models": { "_default": "input_tokens * 0.01 + output_tokens * 0.03" },
   "plans": {
     "free": {

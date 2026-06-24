@@ -32,6 +32,7 @@ npm install @apoorwv/ducto
 from ducto import PricingEngine, UsageMetrics
 
 engine = PricingEngine.from_dict({
+    "version": 1,
     "models": {"_default": "input_tokens * 0.001 + output_tokens * 0.003"},
 })
 
@@ -45,6 +46,7 @@ print(f"Total credits: {result.total}")
 import { PricingEngine } from "@apoorwv/ducto";
 
 const engine = PricingEngine.fromDict({
+  version: 1,
   models: { "_default": "input_tokens * (0.001 / 1000) + output_tokens * (0.003 / 1000)" },
 });
 
@@ -71,6 +73,7 @@ Creates `user_credits`, `credit_transactions`, `credit_reservations` tables — 
 ```bash
 ducto pricing set - <<'JSON'
 {
+  "version": 1,
   "models": {
     "gpt-4": "input_tokens * 0.01 + output_tokens * 0.03",
     "_default": "input_tokens * 0.001 + output_tokens * 0.003"

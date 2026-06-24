@@ -25,6 +25,7 @@ import { CreditManager, MemoryStore } from "@apoorwv/ducto";
 const store = new MemoryStore();
 const manager = new CreditManager(store);
 manager.publishPricingFromDict({
+  version: 1,
   models: { "_default": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)" },
   plans: {
     free: { id: "free", name: "Free Tier", freeAllowance: 50000 },

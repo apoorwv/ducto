@@ -100,6 +100,7 @@ manager.add_credits(user, 500)
 # emits a credits.deducted event.
 print("\n--- deduct end-to-end (triggers credits.deducted) ---")
 engine = PricingEngine.from_dict({
+    "version": 1,
     "models": {"_default": "input_tokens * 1"},
 })
 manager = CreditManager(store, engine=engine, emitter=emitter)

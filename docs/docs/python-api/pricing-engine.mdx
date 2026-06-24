@@ -9,6 +9,7 @@ from ducto import PricingEngine
 
 # From a dict (testing, stateless)
 engine = PricingEngine.from_dict({
+    "version": 1,
     "models": {"_default": "input_tokens * 0.001 + output_tokens * 0.003"},
 })
 

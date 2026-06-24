@@ -27,6 +27,7 @@ manager = CreditManager(store=store, engine=engine, emitter=emitter)
 
 ```python
 manager.publish_pricing_from_dict({
+    "version": 1,
     "models": {"_default": "input_tokens * (0.001 / 1000)"},
 })
 ```

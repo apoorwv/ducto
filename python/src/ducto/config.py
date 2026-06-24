@@ -1,6 +1,6 @@
 """Pricing config loading with pydantic validation and expression validation."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, NonNegativeInt, model_validator
 
@@ -15,10 +15,11 @@ class ConfigError(Exception):
 class PricingConfig(BaseModel):
     """Validated pricing configuration.
 
-    Unified format (no version field).  Optional ``plans`` key carries
+    ``version`` must be ``1`` (current/latest).  Optional ``plans`` key carries
     subscription-plan definitions for allowance-based features.
     """
 
+    version: Literal[1] = 1
     models: dict[str, str]
     tools: dict[str, str] = Field(default_factory=lambda: {"_default": "tool_calls * 0"})
     search: dict[str, str] = Field(default_factory=dict)

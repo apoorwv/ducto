@@ -17,6 +17,7 @@ const store = new MemoryStore();
 const manager = new CreditManager(store);
 
 manager.publishPricingFromDict({
+  version: 1,
   models: { "_default": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)" },
   plans: {
     free: { id: "free", name: "Free Tier", freeAllowance: 50000 },
@@ -71,6 +72,7 @@ Requires Node.js 18+ (native `fetch` for Supabase store).
 import { PricingEngine } from "@apoorwv/ducto";
 
 const engine = PricingEngine.fromDict({
+  version: 1,
   models: {
     "gpt-4": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)",
     "_default": "input_tokens * (0.001 / 1000) + output_tokens * (0.003 / 1000)",
@@ -94,6 +96,7 @@ const store = new MemoryStore();
 const manager = new CreditManager(store);
 
 manager.publishPricingFromDict({
+  version: 1,
   models: { "_default": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)" },
   plans: {
     free: { id: "free", name: "Free Tier", freeAllowance: 50000 },
@@ -134,6 +137,7 @@ const store = new MemoryStore();
 const manager = new CreditManager(store);
 
 manager.publishPricingFromDict({
+  version: 1,
   models: { "_default": "input_tokens * 1" },
   plans: {
     free: { id: "free", name: "Free Tier", freeAllowance: 50000 },
@@ -207,6 +211,7 @@ Basic example:
 
 ```json
 {
+  "version": 1,
   "models": {
     "gpt-4": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)",
     "_default": "input_tokens * (0.001 / 1000) + output_tokens * (0.003 / 1000)"

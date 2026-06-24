@@ -35,9 +35,10 @@ class PricingConfigData(BaseModel):
     """Pricing configuration schema.
 
     Mirrors the YAML config structure used by ``PricingEngine``.
-    Unified format with optional plan definitions — no version field.
+    Unified format with optional plan definitions.
     """
 
+    version: Literal[1] = 1
     models: dict[str, str]
     tools: dict[str, str] = Field(default_factory=lambda: {"_default": "tool_calls * 0"})
     search: dict[str, str] = Field(default_factory=dict)

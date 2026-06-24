@@ -6,6 +6,7 @@ The pricing config is stored in the `credit_pricing_config` table or loaded from
 
 ```json
 {
+  "version": 1,
   "models": {
     "gpt-4": "input_tokens * 0.01 + output_tokens * 0.03",
     "_default": "input_tokens * 0.001 + output_tokens * 0.003"
@@ -27,6 +28,7 @@ Extends flat pricing with subscription plan definitions. Plans give users free m
 
 ```json
 {
+  "version": 1,
   "models": {
     "_default": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)"
   },
