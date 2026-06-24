@@ -87,7 +87,22 @@ export class PostgresStore implements CreditStore {
 
   private async callproc(name: string, params: unknown[]): Promise<unknown[]> {
     const placeholders = params.map((_, i) => `$${i + 1}`).join(", ");
-    return await this.query(`SELECT * FROM ${name}(${placeholders})`, params);
+    const rows = await this.query(`SELECT * FROM ${name}(${placeholders})`, params);
+    // Functions return JSONB — PG wraps result as {funcname: jsonb_string}
+    // Unwrap by parsing the first column of each row
+    if (rows.length > 0) {
+      const firstCol = Object.keys(rows[0] as Record<string, unknown>)[0];
+      const val = (rows[0] as Record<string, unknown>)[firstCol];
+      if (typeof val === "string") {
+        try {
+          const parsed = JSON.parse(val);
+          return Array.isArray(parsed) ? parsed : [parsed];
+        } catch {
+          return rows;
+        }
+      }
+    }
+    return rows;
   }
 
   async setup(_databaseUrl?: string | null): Promise<SetupResult> {
