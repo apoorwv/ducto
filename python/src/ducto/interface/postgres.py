@@ -78,6 +78,8 @@ class PostgresStore(CreditStore):
                             CREATE FUNCTION auth.role() RETURNS text
                             LANGUAGE SQL IMMUTABLE AS $func$ SELECT 'service_role'::text $func$;
                             CREATE TABLE IF NOT EXISTS auth.users (id uuid PRIMARY KEY);
+                            CREATE ROLE anon;
+                            CREATE ROLE authenticated;
                             CREATE FUNCTION auth.uid() RETURNS uuid
                             LANGUAGE SQL IMMUTABLE AS $func$ SELECT '00000000-0000-0000-0000-000000000000'::uuid $func$;
                         END IF;
