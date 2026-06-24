@@ -2,63 +2,58 @@
 
 [![CI](https://github.com/apoorwv/ducto/actions/workflows/ci.yml/badge.svg)](https://github.com/apoorwv/ducto/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)(LICENSE)
 
 Add usage-based credits to your AI SaaS in minutes — not weeks.
 
 ducto is a drop-in credit calculation engine. Define pricing as math expressions
 (per-model, per-tool, search/RAG, cache, fixed jobs), connect a database, and
-start deducting credits. No billing infrastructure to build. No YAML configs.
-Pricing lives in your DB — update it live without redeploys.
+start deducting credits. No billing infrastructure to build. Pricing lives in
+your DB — update it live without redeploys.
 
 ```python
 from ducto import CreditManager, UsageMetrics
 from ducto.interface.supabase import HttpxSupabaseStore
 
-# 3 lines. Your users now have credits.
 store = HttpxSupabaseStore(url=supabase_url, key=service_role_key)
 manager = CreditManager(store=store)
 manager.load_pricing_from_store()
 
-# Deduct credits from a single LLM call
-manager.deduct(
+manager.add_credits("user_abc", 1000)
+
+result = manager.deduct(
     user_id="user_abc",
     metrics=UsageMetrics(model="gpt-4", input_tokens=500, output_tokens=200),
-    idempotency_key="chat_42_turn_7",
+    idempotency_key="chat_42",
 )
+print(f"Deducted {abs(result.amount)} credits. Balance: {result.balance_after}")
 ```
-
-Run `ducto migrate "postgresql://..." && ducto pricing set config.json` and
-you're live. Balance tracking, idempotent deductions, overuse protection —
-all handled.
 
 ## Features
 
-- **Safe expression engine** — Uses Python's `ast` module with a strict
-  allowlist (no `eval()` of raw strings, no `exec()`, no attribute access,
-  no imports). Validated at config load time.
-- **Database-backed pricing** — Pricing expressions stored in a
-  `credit_pricing_config` table. Enables live pricing updates without
-  redeploys. Dict loading available for testing and stateless calculation.
-- **Multi-dimensional** — Per-model formulas (with `_default` fallback),
-  per-tool overrides, search/RAG, cache read discounts, fixed-cost jobs.
-- **Stateless core** — Pure calculation layer has zero database dependency.
-- **Auditable** — Returns a structured `CostBreakdown` with per-dimension
-  costs and metadata.
-- **Pluggable storage** — Reserve-then-deduct pattern via `CreditStore`
-  adapters: Supabase, raw PostgreSQL, or in-memory for testing.
-- **Safe defaults** — Configurable `min_balance` floor, reservation expiry
-  (10 min), non-negative balance enforcement at the database level.
+- **Safe expression engine** — Python `ast` module with strict allowlist. `min`, `max`, `if`, `tier`, `clamp`, `ceil`, `floor`, `round`, `percentile`. No eval/exec, no attribute access, no imports.
+- **Plan-based pricing (v2)** — Subscription plans with free monthly allowances, rate overrides, and feature flags. Allowance consumed before balance.
+- **Refunds** — Full and partial credit reversals with duplicate detection and idempotency.
+- **Credit expiry / TTL** — Time-bound credits with `expires_at` on `add_credits`. Sweep with dry-run mode.
+- **Team / shared balances** — Separate team credit pools with per-member spend caps and attribution.
+- **Spend caps** — Per-user daily/monthly limits with `deny`, `warn`, `notify` actions. Per-model caps supported.
+- **Usage analytics** — `spend_by_user`, `spend_by_model`, `top_users`, `daily_spend`, `aggregate_stats` across time windows.
+- **Event hooks** — Typed pub/sub for `credits.deducted`, `credits.added`, `credits.refunded`, `credits.expired`, `credits.cap_reached`, `credits.cap_warning`, `credits.low_balance`.
+- **Database-backed pricing** — Live updates without redeploys. Dict loading for testing.
+- **Multi-dimensional** — Per-model (with `_default` fallback), per-tool overrides, search/RAG, cache discounts, fixed-cost jobs.
+- **Pluggable storage** — Reserve-then-deduct via `CreditStore` adapters: Supabase, PostgreSQL, in-memory.
+- **Safe defaults** — `min_balance` floor, reservation expiry (10 min), idempotent deductions, concurrent protection.
+- **Auditable** — Structured `CostBreakdown` with per-dimension costs.
 
 ## Installation
 
 ```bash
 pip install ducto
 
-# With Supabase store support
+# With Supabase store
 pip install "ducto[supabase]"
 
-# With PostgreSQL store support
+# With PostgreSQL store
 pip install "ducto[postgres]"
 
 # Development & testing
@@ -67,7 +62,25 @@ pip install "ducto[test]"
 
 Requires Python 3.11+.
 
+## Full docs
+
+**[apoorwv.github.io/ducto](https://apoorwv.github.io/ducto/)** — Python API reference, expressions, configuration, examples.
+
 ## Quick Start
+
+### 0. Stateless calculation (no database)
+
+```python
+from ducto import PricingEngine, UsageMetrics
+
+engine = PricingEngine.from_dict({
+    "version": 1,
+    "models": {"_default": "input_tokens * 0.001 + output_tokens * 0.003"},
+})
+
+result = engine.calculate(UsageMetrics(model="gpt-4", input_tokens=500, output_tokens=200))
+print(f"Total credits: {result.total}")
+```
 
 ### 1. Install and migrate
 
@@ -76,25 +89,24 @@ pip install "ducto[postgres]"
 ducto migrate "postgresql://user:pass@host:5432/db"
 ```
 
-Creates all tables (`user_credits`, `credit_transactions`,
-`credit_reservations`) and RPCs — idempotent, safe to run on every deploy.
+Creates all tables (`user_credits`, `credit_transactions`, `credit_reservations`,
+`credit_plans`, `credit_usage_window`, `credit_teams`, `credit_team_members`,
+`credit_spend_caps`, `credit_pricing_config`) and 20+ RPCs — all idempotent.
 
 ### 2. Seed pricing
 
 ```bash
 ducto pricing set - <<'JSON'
 {
-  "version": 1,
-  "models": {
-    "gpt-4": "input_tokens * 0.01 + output_tokens * 0.03",
-    "_default": "input_tokens * 0.001 + output_tokens * 0.003"
+  "version": 2,
+  "models": { "_default": "input_tokens * 0.01 + output_tokens * 0.03" },
+  "plans": {
+    "free": { "id": "free", "name": "Free Tier", "free_allowance": 50000 },
+    "pro": { "id": "pro", "name": "Pro", "free_allowance": 500000 }
   }
 }
 JSON
 ```
-
-Pricing is stored in `credit_pricing_config`. Update it at any time — no
-redeploy needed.
 
 ### 3. Deduct credits
 
@@ -107,42 +119,17 @@ manager = CreditManager(store=store)
 manager.load_pricing_from_store()
 
 manager.add_credits("user_abc", 1000)
-
 result = manager.deduct(
     user_id="user_abc",
     metrics=UsageMetrics(model="gpt-4", input_tokens=500, output_tokens=200),
-    idempotency_key="chat_session_42",
+    idempotency_key="tx_001",
 )
 print(f"Deducted {abs(result.amount)} credits. Balance: {result.balance_after}")
 ```
 
-### Calculation only (no database)
-
-For testing or stateless calculation without a store:
-
-```python
-from ducto import PricingEngine, UsageMetrics
-
-engine = PricingEngine.from_dict({
-    "version": 1,
-    "models": {"_default": "input_tokens * 0.001 + output_tokens * 0.003"},
-})
-
-result = engine.calculate(
-    UsageMetrics(model="gpt-4", input_tokens=500, output_tokens=200),
-)
-print(f"Total credits: {result.total}")
-```
-
 ## Pricing Configuration
 
-Pricing is stored in the `credit_pricing_config` table via the
-`set_active_pricing_config` RPC. The
-`CreditManager.load_pricing_from_store()` method fetches the active
-config at runtime. See [`scripts/seed_pricing.py`](scripts/seed_pricing.py)
-for reference.
-
-### Expression format
+### Version 1 (flat)
 
 ```json
 {
@@ -151,204 +138,145 @@ for reference.
     "gpt-4": "input_tokens * 0.01 + output_tokens * 0.03",
     "_default": "input_tokens * 0.001 + output_tokens * 0.003"
   },
-  "tools": {
-    "_default": "tool_calls * 0",
-    "web_search": "web_search_calls * 0.5"
-  },
-  "search": {
-    "costs": "search_queries * 0.5 + search_results * 0.05"
-  },
-  "cache": {
-    "discount": "-cache_read_tokens * 0.0045"
-  },
-  "fixed": {
-    "batch_job": 20
-  },
+  "tools": { "_default": "tool_calls * 0" },
+  "search": { "costs": "search_queries * 0.5 + search_results * 0.05" },
+  "cache": { "discount": "-cache_read_tokens * 0.0045" },
+  "fixed": { "batch_job": 20 },
   "min_balance": 5
 }
 ```
 
-### Available expression variables
+### Version 2 (with plans)
 
-| Variable | Source field in `UsageMetrics` |
-|----------|--------------------------------|
-| `input_tokens` | `metrics.input_tokens` |
-| `output_tokens` | `metrics.output_tokens` |
-| `cache_read_tokens` | `metrics.cache_read_tokens` |
-| `cache_write_tokens` | `metrics.cache_write_tokens` |
-| `tool_calls` | `len(metrics.tool_calls)` |
-| `search_queries` | `metrics.search_queries` |
-| `search_results` | `metrics.search_results` |
-| `web_search_calls` | `metrics.web_search_calls` |
-| `code_exec_calls` | `metrics.code_exec_calls` |
+```json
+{
+  "version": 2,
+  "models": { "_default": "input_tokens * 0.01 + output_tokens * 0.03" },
+  "plans": {
+    "free": {
+      "id": "free",
+      "name": "Free Tier",
+      "free_allowance": 50000,
+      "rate_overrides": { "_default": "input_tokens * 0.02 + output_tokens * 0.06" },
+      "features": { "max_concurrency": 1 }
+    },
+    "pro": {
+      "id": "pro",
+      "name": "Pro Plan",
+      "free_allowance": 500000
+    }
+  }
+}
+```
 
-### Supported functions
+### Expression syntax
 
-`ceil`, `floor`, `min`, `max`, `round`
+| Feature | Example |
+|---------|---------|
+| Arithmetic | `+`, `-`, `*`, `/`, `//`, `%`, `**` |
+| Comparisons | `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in` |
+| Boolean | `and`, `or`, `not` |
+| Ternary | `X if cond else Y` |
+| Functions | `ceil`, `floor`, `round`, `min`, `max`, `if(cond,t,f)`, `tier(v,t1,r1,t2,r2,...)`, `clamp(x,lo,hi)`, `percentile(p,v1,v2,...)` |
 
-### Version 1 rules
+### Available metrics
 
-- `models` section is **required** and must be a non-empty dict
-- `_default` model is used when no specific model matches
-- Tool costs don't double-count: tools with individual entries are
-  evaluated separately; remaining calls use `_default`
-- `cache.discount` is typically a negative value (savings/rebate)
-- `fixed` costs are non-negative integers, applied when
-  `UsageMetrics.fixed_job` matches
+| Variable | Source |
+|----------|--------|
+| `input_tokens` | `UsageMetrics.input_tokens` |
+| `output_tokens` | `UsageMetrics.output_tokens` |
+| `cache_read_tokens` | `UsageMetrics.cache_read_tokens` |
+| `cache_write_tokens` | `UsageMetrics.cache_write_tokens` |
+| `tool_calls` | `len(UsageMetrics.tool_calls)` |
+| `search_queries` | `UsageMetrics.search_queries` |
+| `search_results` | `UsageMetrics.search_results` |
+| `web_search_calls` | `UsageMetrics.web_search_calls` |
+| `code_exec_calls` | `UsageMetrics.code_exec_calls` |
 
 ## Storage Backends
 
-### MemoryStore (testing/dev)
+| Store | Import | Deps | Use case |
+|-------|--------|------|----------|
+| `MemoryStore` | `ducto.interface.memory.MemoryStore` | None | Testing, dev |
+| `HttpxSupabaseStore` | `ducto.interface.supabase.HttpxSupabaseStore` | `httpx` | Supabase production |
+| `PostgresStore` | `ducto.interface.postgres.PostgresStore` | `psycopg2` | Direct PostgreSQL |
 
-```python
-from ducto import CreditManager
-from ducto.interface.memory import MemoryStore
+### Custom stores
 
-store = MemoryStore()
-manager = CreditManager(store=store)
-```
-
-### SupabaseStore
-
-```python
-from ducto.interface.supabase import HttpxSupabaseStore
-
-store = HttpxSupabaseStore(url=supabase_url, key=service_role_key)
-```
-
-### PostgresStore
-
-```python
-from ducto.interface.postgres import PostgresStore
-
-store = PostgresStore("postgresql://user:pass@host:5432/db")
-```
-
-### Custom adapters
-
-Implement `ducto.interface.base.CreditStore` (an ABC with 8 methods) to
-integrate with any backend.
+Implement `ducto.interface.base.CreditStore` (ABC with 18 abstract methods).
 
 ## Credit Lifecycle
 
-`CreditManager` orchestrates a three-step reserve-then-deduct pattern:
+`CreditManager.deduct()` orchestrates:
 
-1. **Calculate** — `PricingEngine.calculate(UsageMetrics)` -> `CostBreakdown`
-2. **Reserve** — `store.reserve_credits(user_id, amount)` -> `ReserveResult`
-   (locks the user row; reservations auto-expire after 10 minutes)
-3. **Deduct** — `store.deduct_credits(user_id, reservation_id, amount)`
-   -> `DeductionResult` (idempotent, atomic)
+1. **Calculate** — `PricingEngine.calculate(metrics)` → cost
+2. **Plan allowance** — consume free allowance if user has a plan
+3. **Spend cap check** — deny/warn/notify if configured limit exceeded
+4. **Reserve** — `store.reserve_credits()` locks credits (auto-expires 10 min)
+5. **Deduct** — `store.deduct_credits()` atomic deduction (idempotent)
 
-```python
-manager = CreditManager(store=store)
-manager.load_pricing_from_store()
-result = manager.deduct(
-    user_id="user_abc",
-    metrics=UsageMetrics(model="gpt-4", input_tokens=100, output_tokens=50),
-    idempotency_key="tx_42",
-)
-```
+### Additional operations
 
-Pricing can also be loaded from a dict (no database):
-
-```python
-manager.publish_pricing_from_dict({
-    "version": 1,
-    "models": {"_default": "input_tokens * 0.001 + output_tokens * 0.003"},
-})
-```
+- **Refund:** `manager.refund_credits(tx_id, amount?)` — full or partial
+- **Expire:** `manager.sweep_expired_credits(dry_run=True)` — preview or execute
+- **Team deduct:** `manager.deduct_team(team_id, user_id, metrics)` — team pool
+- **Analytics:** `spend_by_user`, `spend_by_model`, `top_users`, `daily_spend`, `aggregate_stats`
+- **Events:** Subscribe via `CreditEventEmitter` for lifecycle hooks
 
 ## SQL Migrations
 
-Three bundled SQL files create the required schema:
+10 bundled migrations (`ducto migrate <url>`):
 
-| File | Creates |
-|------|---------|
-| `001_credit_tables.sql` | `user_credits`, `credit_transactions`, `credit_reservations` tables, RLS policies, signup bonus trigger |
-| `002_credit_rpcs.sql` | `credits_add`, `reserve_credits`, `deduct_credits`, `get_credits_balance` RPCs (SECURITY DEFINER, service_role only) |
-| `003_pricing_config.sql` | `credit_pricing_config` table, `get_active_pricing_config`, `set_active_pricing_config` RPCs |
-
-All DDL is idempotent (uses `IF NOT EXISTS` / `CREATE OR REPLACE`).
-
-### CLI reference
-
-```bash
-# Create tables, indexes, and RPC functions
-ducto migrate "postgresql://user:pass@host:5432/db"
-
-# Show current active pricing config
-ducto pricing get
-
-# Update active pricing from a JSON or YAML file
-ducto pricing set config.yaml
-```
-
-The `pricing` commands require `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
-environment variables.
-
-Or from Python:
-
-```python
-from ducto.interface.supabase import run_migrations
-
-result = run_migrations("postgresql://user:pass@host:5432/db")
-assert result.success, result.errors
-```
-
-## Expression Safety
-
-The expression engine uses a strict AST-walking validator:
-
-1. Parse `ast.parse(expr, mode="eval")`
-2. Walk the AST -- every node type must be in an allowlist (~25 node
-   types: binary ops, comparisons, conditionals, booleans, constants,
-   names, calls)
-3. Function calls must be in a whitelist (`ceil`, `floor`, `min`, `max`,
-   `round`)
-4. Rejects: attributes (`x.__class__`), subscripts (`x[0]`), lambdas,
-   comprehensions, imports, starred expressions
-5. Evaluation namespace has `__builtins__` emptied -- only the 5
-   whitelisted math/python builtins and user-provided variable names are
-   available
-6. All expression strings are validated at config load time -- invalid
-   configs never reach the engine
+| File | Contents |
+|------|----------|
+| `001_credit_tables.sql` | Core tables + RLS |
+| `002_credit_rpcs.sql` | Balance RPCs |
+| `003_pricing_config.sql` | Config table + RPCs |
+| `004_user_plans.sql` | Plans + usage windows |
+| `005_credit_refunds.sql` | Refund RPC |
+| `006_credit_expiry.sql` | Expiry sweep RPC |
+| `007_usage_analytics.sql` | Analytics RPCs |
+| `008_team_balances.sql` | Teams + members |
+| `009_spend_caps.sql` | Spend cap RPC |
+| `010_aggregate_stats.sql` | Aggregate stats RPC |
 
 ## Architecture
 
 ```
 ducto/
-  expr.py          # Safe AST expression evaluator
-  config.py        # Pydantic model + dict loading for PricingConfig
-  engine.py        # PricingEngine -- core calculation logic
-  metrics.py       # UsageMetrics, ToolCall dataclasses
-  breakdown.py     # CostBreakdown dataclass
-  manager.py       # CreditManager -- calculate -> reserve -> deduct
+  expr.py              # Safe AST expression evaluator
+  config.py            # PricingConfig loading + validation
+  engine.py            # PricingEngine — calculate, calculateBatch
+  metrics.py           # UsageMetrics, ToolCall
+  breakdown.py         # CostBreakdown
+  events.py            # CreditEventEmitter pub/sub
+  manager.py           # CreditManager orchestration
   interface/
-    base.py        # CreditStore ABC
-    models.py      # Pydantic schemas for store operations
-    memory.py      # MemoryStore (in-memory for testing)
-    supabase.py    # HttpxSupabaseStore adapter + run_migrations()
-    postgres.py    # PostgresStore adapter
-  sql/
-    001_credit_tables.sql
-    002_credit_rpcs.sql
-    003_pricing_config.sql
+    base.py            # CreditStore ABC (18 methods)
+    models.py          # Pydantic schemas
+    memory.py          # MemoryStore
+    supabase.py        # HttpxSupabaseStore + run_migrations()
+    postgres.py        # PostgresStore
+  sql/                 # 010_*.sql
 ```
+
+## Expression Safety
+
+1. Parse `ast.parse(expr, mode="eval")`
+2. Walk AST — each node type in an allowlist
+3. Allowed functions: `ceil`, `floor`, `round`, `min`, `max`, `if`, `tier`, `clamp`, `percentile`
+4. Rejects: attributes, subscripts, lambdas, comprehensions, imports
+5. `__builtins__` emptied at evaluation time
+6. All expressions validated at config load time
 
 ## Development
 
 ```bash
-# Install with dev dependencies
 pip install "ducto[test]"
-
-# Run tests
 pytest
-
-# Lint & format
 ruff check .
 ruff format .
-
-# Type check
 pyright
 ```
 
+See [CONTRIBUTING.md](CONTRIBUTING.md).

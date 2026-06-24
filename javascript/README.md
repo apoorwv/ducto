@@ -8,25 +8,20 @@ Add usage-based credits to your AI SaaS in minutes — not weeks.
 
 ducto is a drop-in credit calculation engine. Define pricing as math expressions
 (per-model, per-tool, search/RAG, cache, fixed jobs), connect a database, and
-start deducting credits. No billing infrastructure to build. Pricing lives in
-your DB — update it live without redeploys.
+start deducting credits. Pricing lives in your DB — update it live without redeploys.
 
 ```typescript
-import { CreditManager, UsageMetrics } from "@apoorwv/ducto";
-import { MemoryStore } from "@apoorwv/ducto";
+import { CreditManager, MemoryStore } from "@apoorwv/ducto";
 
-// Create a store (use MemoryStore for testing, PostgresStore/SupabaseStore for prod)
 const store = new MemoryStore();
 const manager = new CreditManager(store);
 
-// Load pricing and add credits
 manager.publishPricingFromDict({
   version: 1,
   models: { "gpt-4": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)" },
 });
-await manager.addCredits("user_abc", 1000);
 
-// Deduct credits from a single LLM call
+await manager.addCredits("user_abc", 1000);
 const result = await manager.deduct("user_abc", {
   model: "gpt-4",
   inputTokens: 500,
@@ -39,22 +34,19 @@ Works in Node.js 18+, Bun, and Deno.
 
 ## Features
 
-- **Safe expression engine** — Recursive descent parser with a strict allowlist.
-  Parses, validates, and evaluates expressions at config load time. No eval(),
-  no arbitrary code execution.
-- **Database-backed pricing** — Pricing expressions stored in a
-  `credit_pricing_config` table. Enables live pricing updates without
-  redeploys. Dict loading available for testing and stateless calculation.
-- **Multi-dimensional** — Per-model formulas (with `_default` fallback),
-  per-tool overrides, search/RAG, cache read discounts, fixed-cost jobs.
-- **Stateless core** — Pure calculation layer has zero database dependency.
-- **Auditable** — Returns a structured `CostBreakdown` with per-dimension
-  costs and metadata.
-- **Pluggable storage** — Reserve-then-deduct pattern via `CreditStore`
-  adapters: Supabase (fetch-based, zero deps), raw PostgreSQL (`pg`), or
-  in-memory for testing.
-- **Safe defaults** — Configurable `minBalance` floor, idempotent deductions,
-  concurrent reservation protection.
+- **Safe expression engine** — Recursive descent parser with strict allowlist. `min`, `max`, `if`, `tier`, `clamp`, `ceil`, `floor`, `round`, `percentile`. No eval/Function().
+- **Plan-based pricing (v2)** — Subscription plans with free monthly allowances and rate overrides. Allowance consumed before balance.
+- **Refunds** — Full and partial credit reversals with duplicate detection.
+- **Credit expiry / TTL** — Time-bound credits with `expiresAt` on `addCredits`. Sweep with dry-run mode.
+- **Team / shared balances** — Separate team credit pools with per-member spend caps.
+- **Spend caps** — Per-user daily/monthly limits with `deny`, `warn`, `notify` actions. Per-model caps supported.
+- **Usage analytics** — `spendByUser`, `spendByModel`, `topUsers`, `dailySpend`, `aggregateStats` across time windows.
+- **Event hooks** — Typed pub/sub for `credits.deducted`, `credits.added`, `credits.refunded`, `credits.expired`, `credits.cap_reached`, `credits.cap_warning`, `credits.low_balance`.
+- **Database-backed pricing** — Live updates without redeploys. Dict loading for testing.
+- **Multi-dimensional** — Per-model (with `_default` fallback), per-tool overrides, search/RAG, cache discounts, fixed-cost jobs.
+- **Pluggable storage** — Reserve-then-deduct via `CreditStore`: Supabase (native fetch, zero deps), PostgreSQL (`pg`), or in-memory.
+- **Safe defaults** — `minBalance` floor, idempotent deductions, concurrent reservation protection.
+- **Auditable** — Structured `CostBreakdown` with per-dimension costs.
 
 ## Installation
 
@@ -64,11 +56,15 @@ npm install @apoorwv/ducto
 # PostgreSQL store (optional)
 npm install pg
 
-# YAML pricing config loading (optional)
+# YAML pricing loading (optional)
 npm install js-yaml
 ```
 
-Requires Node.js 18+ (for native `fetch` support with Supabase store).
+Requires Node.js 18+ (native `fetch` for Supabase store).
+
+## Full docs
+
+**[apoorwv.github.io/ducto](https://apoorwv.github.io/ducto/)** — JS API reference, expressions, configuration, examples.
 
 ## Quick Start
 
@@ -91,10 +87,9 @@ const cost = engine.calculate({
   outputTokens: 200,
 });
 console.log(`Total: ${cost.total}`); // 0.011
-console.log(`Model: ${cost.modelCredits}, Tools: ${cost.toolCredits}`);
 ```
 
-### Full credit lifecycle (in-memory, no database)
+### Full credit lifecycle (in-memory)
 
 ```typescript
 import { CreditManager, MemoryStore } from "@apoorwv/ducto";
@@ -102,20 +97,17 @@ import { CreditManager, MemoryStore } from "@apoorwv/ducto";
 const store = new MemoryStore();
 const manager = new CreditManager(store);
 
-// Publish pricing
 manager.publishPricingFromDict({
   version: 1,
   models: { "gpt-4": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)" },
 });
 
-// Add credits and deduct
 await manager.addCredits("user_abc", 1000);
 const result = await manager.deduct(
   "user_abc",
   { model: "gpt-4", inputTokens: 500, outputTokens: 200 },
-  "idempotency-key-123", // prevents double-charge on retry
+  "idempotency-key-123",
 );
-
 console.log(`Remaining balance: ${(await manager.getBalance("user_abc")).balance}`);
 ```
 
@@ -134,61 +126,68 @@ await manager.loadPricingFromStore();
 await manager.addCredits("user_abc", 5000);
 ```
 
+### Plan-based pricing
+
+```typescript
+import { CreditManager, MemoryStore } from "@apoorwv/ducto";
+
+const store = new MemoryStore();
+const manager = new CreditManager(store);
+
+manager.publishPricingFromDict({
+  version: 2,
+  models: { "_default": "input_tokens * 1" },
+  plans: {
+    free: { id: "free", name: "Free Tier", freeAllowance: 50000 },
+  },
+});
+await store.setUserPlan("user-1", "free");
+await manager.addCredits("user-1", 10);
+
+// First 50000 credits are free — no balance deduction
+const result = await manager.deduct("user-1", { inputTokens: 5 });
+console.log(result.amount); // 0 — covered by allowance
+```
+
 ## Pricing Configuration
 
-Pricing is a JSON object with version, model expressions, and optional sections
-for tools, search, cache, and fixed-cost jobs.
-
-### Expression format
+Version 1 example:
 
 ```json
 {
   "version": 1,
   "models": {
     "gpt-4": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)",
-    "gpt-3.5-turbo": "input_tokens * (0.001 / 1000) + output_tokens * (0.002 / 1000)",
-    "_default": "input_tokens * (0.05 / 1000)"
+    "_default": "input_tokens * (0.001 / 1000) + output_tokens * (0.003 / 1000)"
   },
-  "tools": {
-    "_default": "tool_calls * 5 / 1000",
-    "code_exec": "tool_calls * 10 / 1000"
-  },
-  "search": {
-    "costs": "search_queries * 0.5 + search_results * 0.05"
-  },
-  "cache": {
-    "discount": "-cache_read_tokens * (0.001 / 1000)"
-  },
-  "fixed": {
-    "batch_train": 100,
-    "daily_report": 10
-  },
+  "tools": { "_default": "tool_calls * 5 / 1000" },
+  "search": { "costs": "search_queries * 0.5 + search_results * 0.05" },
+  "cache": { "discount": "-cache_read_tokens * (0.001 / 1000)" },
+  "fixed": { "batch_train": 100 },
   "minBalance": 5
 }
 ```
 
 ### Expression syntax
 
-| Feature | Example | Description |
-|---------|---------|-------------|
-| Arithmetic | `input_tokens * 0.01` | `+`, `-`, `*`, `/`, `//`, `%`, `**` |
-| Variables | `input_tokens`, `output_tokens`, `tool_calls` | All usage metrics available |
-| Comparisons | `output_tokens > 1000` | `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in` |
-| Boolean | `tool_calls > 0 and tool_calls <= 10` | `and`, `or` |
-| Ternary | `output_tokens * 0.5 if output_tokens > 1000 else output_tokens * 0.3` | Python-style `X if cond else Y` |
-| Functions | `ceil()`, `floor()`, `min()`, `max()`, `round()` | Safe math functions |
+| Feature | Example |
+|---------|---------|
+| Arithmetic | `+`, `-`, `*`, `/`, `//`, `%`, `**` |
+| Comparisons | `==`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not in` |
+| Boolean | `and`, `or`, `not` |
+| Ternary | `X if cond else Y` |
+| Functions | `ceil`, `floor`, `round`, `min`, `max`, `if(cond,t,f)`, `tier(v,t1,r1,t2,r2,...)`, `clamp(x,lo,hi)`, `percentile(p,v1,v2,...)` |
 
 ### Loading from file
 
 ```typescript
-import { loadPricingFile } from "@apoorwv/ducto";
-import { PricingEngine } from "@apoorwv/ducto";
+import { loadPricingFile, PricingEngine } from "@apoorwv/ducto";
 
 const data = await loadPricingFile("./pricing.yaml");
 const engine = PricingEngine.fromDict(data);
 ```
 
-## Available metrics
+### Available metrics
 
 | Variable | Source | Type |
 |----------|--------|------|
@@ -228,15 +227,44 @@ engine.minBalance: number
 ### `CreditManager`
 
 ```typescript
-new CreditManager(store: CreditStore, engine?: PricingEngine)
+new CreditManager(store: CreditStore, engine?, emitter?)
+
+// Pricing
 manager.publishPricingFromDict(data): void
 manager.loadPricingFromStore(): Promise<void>
 manager.publishPricing(config, label?): void
+
+// Balance ops
 manager.getBalance(userId): Promise<BalanceResult>
-manager.addCredits(userId, amount, type?, metadata?): Promise<AddCreditsResult>
+manager.addCredits(userId, amount, type?, metadata?, expiresAt?): Promise<AddCreditsResult>
 manager.reserveCredits(userId, amount, opType?, metadata?, minBalance?): Promise<ReserveResult>
 manager.deduct(userId, metrics, idempotencyKey?, metadata?): Promise<DeductionResult>
 manager.deductFixed(userId, jobName, idempotencyKey?, metadata?): Promise<DeductionResult>
+
+// Refunds
+manager.refundCredits(transactionId, amount?, reason?, metadata?): Promise<RefundResult>
+
+// Expiry
+manager.sweepExpiredCredits(dryRun?): Promise<SweepResult>
+
+// Teams
+manager.deductTeam(teamId, userId, metrics, metadata?): Promise<TeamDeductionResult>
+
+// Analytics
+manager.spendByUser(start, end): Promise<SpendByUserRow[]>
+manager.spendByModel(start, end): Promise<SpendByModelRow[]>
+manager.topUsers(limit, start, end): Promise<TopUserRow[]>
+manager.dailySpend(start, end): Promise<DailySpendRow[]>
+manager.aggregateStats(start, end): Promise<AggregateStats>
+
+// Events
+const emitter = new CreditEventEmitter();
+emitter.on("credits.deducted", handler);
+emitter.on("credits.low_balance", handler);
+// ... credits.added, credits.refunded, credits.expired,
+//     credits.cap_reached, credits.cap_warning
+
+// Properties
 manager.pricingEngine: PricingEngine | null
 ```
 
