@@ -15,6 +15,7 @@ from ducto.interface.base import CreditStore, StoreError
 from ducto.interface.models import (
     AddCreditsResult,
     AddTeamMemberResult,
+    AggregateStatsRow,
     AllowanceResult,
     BalanceResult,
     CapCheckResult,
@@ -508,6 +509,26 @@ class PostgresStore(CreditStore):
             for r in (rows or [])
             if r and isinstance(r[0], dict)
         ]
+
+    def aggregate_stats(self, start: datetime, end: datetime) -> AggregateStatsRow:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("aggregate_stats", [start.isoformat(), end.isoformat()])
+                row = cur.fetchone()
+            conn.commit()
+        finally:
+            conn.close()
+        if not row or not isinstance(row[0], dict):
+            return AggregateStatsRow()
+        d = row[0]
+        return AggregateStatsRow(
+            total_credits_consumed=int(d.get("total_credits_consumed", 0)),
+            active_users=int(d.get("active_users", 0)),
+            avg_daily_spend=int(d.get("avg_daily_spend", 0)),
+            top_model=str(d.get("top_model", "")),
+            top_user=str(d.get("top_user", "")),
+        )
 
     # ── Team/shared balance pools ─────────────────────────────────────────
 

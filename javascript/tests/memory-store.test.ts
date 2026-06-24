@@ -299,6 +299,32 @@ describe("MemoryStore", () => {
   });
 
   describe("usage analytics", () => {
+    it("aggregateStats returns correct aggregates", async () => {
+      await store.addCredits("user-1", 1000);
+      await store.addCredits("user-2", 1000);
+      const r1 = await store.reserveCredits("user-1", 50, "usage");
+      await store.deductCredits("user-1", r1.reservationId, 50);
+      const r2 = await store.reserveCredits("user-2", 30, "usage");
+      await store.deductCredits("user-2", r2.reservationId, 30);
+
+      const now = new Date();
+      const stats = await store.aggregateStats(
+        new Date(now.getTime() - 1000),
+        new Date(now.getTime() + 1000),
+      );
+      expect(stats.totalCreditsConsumed).toBe(80);
+      expect(stats.activeUsers).toBe(2);
+      expect(stats.avgDailySpend).toBe(80);
+      expect(stats.topUser).toBeTruthy();
+    });
+
+    it("aggregateStats returns empty stats for empty window", async () => {
+      const stats = await store.aggregateStats(new Date("2020-01-01"), new Date("2020-01-02"));
+      expect(stats.totalCreditsConsumed).toBe(0);
+      expect(stats.activeUsers).toBe(0);
+      expect(stats.topModel).toBe("");
+    });
+
     it("spendByUser returns correct totals", async () => {
       await store.addCredits("user-1", 1000);
       await store.addCredits("user-2", 2000);

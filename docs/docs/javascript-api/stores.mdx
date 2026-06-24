@@ -10,9 +10,23 @@ import { MemoryStore } from "@apoorwv/ducto";
 const store = new MemoryStore();
 ```
 
+Full `CreditStore` interface (18 async methods):
+
+| Category | Methods |
+|----------|---------|
+| Setup | `setup(databaseUrl?)` |
+| Balances | `getBalance(userId)`, `addCredits(userId, amount, type?, metadata?, expiresAt?)`, `reserveCredits(userId, amount, opType?, metadata?, minBalance?)`, `deductCredits(userId, reservationId, amount, idempotencyKey?, metadata?)` |
+| Pricing | `getActivePricing()`, `setActivePricing(config, label?)` |
+| Plans | `getUserPlan(userId)`, `setUserPlan(userId, planId)`, `checkAllowance(userId)`, `incrementUsageWindow(userId, planId, amount)` |
+| Spend caps | `checkSpendCap(userId, model?, amount?)` |
+| Refunds | `refundCredits(transactionId, amount?, reason?, metadata?)` |
+| Expiry | `sweepExpiredCredits(dryRun?)` |
+| Analytics | `spendByUser(start, end)`, `spendByModel(start, end)`, `topUsers(limit, start, end)`, `dailySpend(start, end)`, `aggregateStats(start, end)` |
+| Teams | `createTeam(name, initialBalance?)`, `getTeamBalance(teamId)`, `addTeamMember(teamId, userId, role?, spendCap?)`, `getTeamMembers(teamId)`, `deductTeam(teamId, userId, amount, metadata?)` |
+
 ## HttpxSupabaseStore
 
-Supabase-backed store using native `fetch` (Node 18+). No HTTP dependencies.
+Supabase-backed store using native `fetch` (Node 18+).
 
 ```typescript
 import { HttpxSupabaseStore } from "@apoorwv/ducto";
@@ -23,6 +37,8 @@ const store = new HttpxSupabaseStore(
 );
 ```
 
+Delegates all operations to Postgres RPC functions via HTTP.
+
 ## PostgresStore
 
 Direct PostgreSQL store. Requires `pg` package.
@@ -32,6 +48,8 @@ import { PostgresStore } from "@apoorwv/ducto";
 
 const store = new PostgresStore("postgresql://user:pass@host:5432/db");
 ```
+
+Delegates all operations to Postgres RPC functions via `callproc`.
 
 ## Custom Adapter
 
@@ -45,7 +63,6 @@ class MyStore implements CreditStore {
   async addCredits(userId: string, amount: number, ...): Promise<AddCreditsResult> { ... }
   async reserveCredits(userId: string, amount: number, ...): Promise<ReserveResult> { ... }
   async deductCredits(userId: string, reservationId: string, amount: number): Promise<DeductionResult> { ... }
-  async expireReservations(): Promise<number> { ... }
-  // ... 3 more methods
+  // ... 14 more methods (see CreditStore interface)
 }
 ```

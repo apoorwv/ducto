@@ -15,6 +15,7 @@ from ducto.interface.base import CreditStore, StoreError
 from ducto.interface.models import (
     AddCreditsResult,
     AddTeamMemberResult,
+    AggregateStatsRow,
     AllowanceResult,
     BalanceResult,
     CapCheckResult,
@@ -466,6 +467,16 @@ class HttpxSupabaseStore(CreditStore):
             )
             for r in rows
         ]
+
+    def aggregate_stats(self, start: datetime, end: datetime) -> AggregateStatsRow:
+        row = self._rpc("aggregate_stats", {"p_start": start.isoformat(), "p_end": end.isoformat()})
+        return AggregateStatsRow(
+            total_credits_consumed=int(row.get("total_credits_consumed", 0)),
+            active_users=int(row.get("active_users", 0)),
+            avg_daily_spend=int(row.get("avg_daily_spend", 0)),
+            top_model=str(row.get("top_model", "")),
+            top_user=str(row.get("top_user", "")),
+        )
 
     # ── Team/shared balance pools ─────────────────────────────────────────
 

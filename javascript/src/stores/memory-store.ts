@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type {
   AddCreditsResult,
   AddTeamMemberResult,
+  AggregateStats,
   AllowanceResult,
   BalanceResult,
   CapCheckResult,
@@ -482,6 +483,36 @@ export class MemoryStore implements CreditStore {
   async topUsers(limit: number, start: Date, end: Date): Promise<TopUserRow[]> {
     const byUser = await this.spendByUser(start, end);
     return byUser.sort((a, b) => b.totalSpend - a.totalSpend).slice(0, limit);
+  }
+
+  // ── Aggregate stats ──────────────────────────────────────────────────
+
+  async aggregateStats(start: Date, end: Date): Promise<AggregateStats> {
+    const usage = this._usageInWindow(start, end);
+    if (usage.length === 0) {
+      return {
+        totalCreditsConsumed: 0,
+        activeUsers: 0,
+        avgDailySpend: 0,
+        topModel: "",
+        topUser: "",
+      };
+    }
+    const total = usage.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    const activeUsers = new Set(usage.map((t) => t.userId)).size;
+    const days = new Set(usage.map((t) => new Date(t.createdAt).toISOString().slice(0, 10))).size;
+    const avgDailySpend = days > 0 ? Math.trunc(total / days) : 0;
+    const byModel = new Map<string, number>();
+    const byUser = new Map<string, number>();
+    for (const t of usage) {
+      const model = (t.metadata?.model as string) ?? "unknown";
+      byModel.set(model, (byModel.get(model) ?? 0) + Math.abs(t.amount));
+      byUser.set(t.userId, (byUser.get(t.userId) ?? 0) + Math.abs(t.amount));
+    }
+    const topModel =
+      byModel.size > 0 ? [...byModel.entries()].sort((a, b) => b[1] - a[1])[0][0] : "";
+    const topUser = byUser.size > 0 ? [...byUser.entries()].sort((a, b) => b[1] - a[1])[0][0] : "";
+    return { totalCreditsConsumed: total, activeUsers, avgDailySpend, topModel, topUser };
   }
 
   // ── Spend caps and rate limiting ─────────────────────────────────────

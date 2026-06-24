@@ -1,6 +1,7 @@
 import type {
   AddCreditsResult,
   AddTeamMemberResult,
+  AggregateStats,
   AllowanceResult,
   BalanceResult,
   CapCheckResult,
@@ -77,6 +78,9 @@ export interface CreditStore {
   spendByModel(start: Date, end: Date): Promise<SpendByModelRow[]>;
   topUsers(limit: number, start: Date, end: Date): Promise<TopUserRow[]>;
   dailySpend(start: Date, end: Date): Promise<DailySpendRow[]>;
+
+  // ── Aggregate stats ────────────────────────────────────────────────
+  aggregateStats(start: Date, end: Date): Promise<AggregateStats>;
 
   // ── Team/shared balance pools ──────────────────────────────────────
   createTeam(name: string, initialBalance?: number): Promise<CreateTeamResult>;

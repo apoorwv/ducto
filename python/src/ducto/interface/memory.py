@@ -12,6 +12,7 @@ from ducto.interface.base import CreditStore
 from ducto.interface.models import (
     AddCreditsResult,
     AddTeamMemberResult,
+    AggregateStatsRow,
     AllowanceResult,
     BalanceResult,
     CapCheckResult,
@@ -98,6 +99,7 @@ class MemoryStore(CreditStore):
                 "007_usage_analytics.sql",
                 "008_team_balances.sql",
                 "009_spend_caps.sql",
+                "010_aggregate_stats.sql",
             ],
         )
 
@@ -509,6 +511,33 @@ class MemoryStore(CreditStore):
             DailySpendRow(date=date, total_spend=v["total"], transaction_count=v["count"])
             for date, v in sorted(by_day.items())
         ]
+
+    # ── Aggregate stats ──────────────────────────────────────────────────
+
+    def aggregate_stats(self, start: datetime, end: datetime) -> AggregateStatsRow:
+        """Aggregate statistics across all users in a time window."""
+        usage = self._usage_in_window(start, end)
+        if not usage:
+            return AggregateStatsRow()
+        total = sum(abs(t.amount) for t in usage)
+        active = len({t.user_id for t in usage})
+        days = len({t.created_at[:10] for t in usage})
+        avg = total // max(days, 1)
+        by_model: dict[str, int] = {}
+        by_user: dict[str, int] = {}
+        for t in usage:
+            model = t.metadata.get("model", "unknown")
+            by_model[model] = by_model.get(model, 0) + abs(t.amount)
+            by_user[t.user_id] = by_user.get(t.user_id, 0) + abs(t.amount)
+        top_model = max(by_model, key=lambda k: by_model[k]) if by_model else ""
+        top_user = max(by_user, key=lambda k: by_user[k]) if by_user else ""
+        return AggregateStatsRow(
+            total_credits_consumed=total,
+            active_users=active,
+            avg_daily_spend=avg,
+            top_model=top_model,
+            top_user=top_user,
+        )
 
     # ── Spend caps and rate limiting ─────────────────────────────────────
 

@@ -1,6 +1,7 @@
 import type {
   AddCreditsResult,
   AddTeamMemberResult,
+  AggregateStats,
   AllowanceResult,
   BalanceResult,
   CapCheckResult,
@@ -403,6 +404,20 @@ export class PostgresStore implements CreditStore {
         transactionCount: Number(row.transaction_count ?? 0),
       };
     });
+  }
+
+  // ── Aggregate stats ────────────────────────────────────────────────
+
+  async aggregateStats(start: Date, end: Date): Promise<AggregateStats> {
+    const rows = await this.callproc("aggregate_stats", [start.toISOString(), end.toISOString()]);
+    const row = (rows?.[0] ?? {}) as Record<string, unknown>;
+    return {
+      totalCreditsConsumed: Number(row.total_credits_consumed ?? 0),
+      activeUsers: Number(row.active_users ?? 0),
+      avgDailySpend: Number(row.avg_daily_spend ?? 0),
+      topModel: String(row.top_model ?? ""),
+      topUser: String(row.top_user ?? ""),
+    };
   }
 
   // ── Team/shared balance pools ────────────────────────────────────────

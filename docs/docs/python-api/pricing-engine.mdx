@@ -89,7 +89,7 @@ The engine uses Python's `ast` module with a strict allowlist:
 
 1. Parses `ast.parse(expr, mode="eval")`
 2. Walks the AST — only ~25 node types allowed (binary ops, comparisons, conditionals, etc.)
-3. Function calls whitelisted: `ceil`, `floor`, `min`, `max`, `round`
+3. Function calls whitelisted: `ceil`, `floor`, `min`, `max`, `round`, `if`, `tier`, `clamp`, `percentile`
 4. Rejects: attributes (`x.__class__`), subscripts (`x[0]`), lambdas, comprehensions, imports
 5. Evaluation namespace has `__builtins__` emptied
 6. All expressions validated at config load time

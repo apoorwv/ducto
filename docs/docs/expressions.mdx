@@ -1,6 +1,6 @@
 # Expression Reference
 
-ducto uses a safe expression language for pricing formulas. The same syntax works identically in Python and JavaScript.
+ducto uses a safe expression language for pricing formulas. Same syntax works identically in Python and JavaScript.
 
 ## Arithmetic
 
@@ -33,6 +33,7 @@ ducto uses a safe expression language for pricing formulas. The same syntax work
 |----------|---------|
 | `and` | `tool_calls > 0 and tool_calls <= 10` |
 | `or` | `tool_calls == 0 or cache_read_tokens > 0` |
+| `not` | `5 if not (tool_calls > 10) else 10` |
 
 ## Ternary
 
@@ -44,18 +45,41 @@ output_tokens * 0.5 if output_tokens > 1000 else output_tokens * 0.3
 
 ## Functions
 
-| Function | Description |
-|----------|-------------|
-| `ceil(x)` | Round up to nearest integer |
-| `floor(x)` | Round down to nearest integer |
-| `min(a, b)` | Smaller of two values |
-| `max(a, b)` | Larger of two values |
-| `round(x)` | Round to nearest integer |
+| Function | Description | Example |
+|----------|-------------|---------|
+| `ceil(x)` | Round up | `ceil(input_tokens * 0.001)` |
+| `floor(x)` | Round down | `floor(output_tokens / 1000)` |
+| `round(x)` | Nearest integer | `round(input_tokens * 0.001)` |
+| `min(a, b, ...)` | Minimum of values | `min(cost_a, cost_b)` |
+| `max(a, b, ...)` | Maximum of values | `max(0, model_cost - allowance)` |
+| `if(cond, then, else)` | Conditional | `if(input_tokens > 1000, cost_a, cost_b)` |
+| `tier(val, t1, r1, t2, r2, ..., default)` | Tiered pricing | `tier(input_tokens, 0, 0, 10000, 5, 100000, 10)` |
+| `clamp(x, lo, hi)` | Range clamp | `clamp(tool_calls, 0, 100)` |
+| `percentile(p, v1, v2, ...)` | Percentile of values | `percentile(95, model_cost_1, model_cost_2)` |
+
+### `tier()` details
+
+Evaluates thresholds sequentially: returns `r1` if `val < t1`, `r2` if `val < t2`, ..., else `default`.
+
+```
+tier(input_tokens, 0, 0, 10000, 5, 100000, 10)
+# 0-9999 → 0, 10000-99999 → 5, 100000+ → 10
+```
+
+### `percentile()` details
+
+Sorts values, computes p-th percentile (0–100) via linear interpolation.
+
+```
+percentile(50, input_tokens, output_tokens, tool_calls)  # median of 3 values
+percentile(0, a, b, c)                                    # min
+percentile(100, a, b, c)                                  # max
+```
 
 ## Available Variables
 
-| Variable | Source Field (Python) | Source Field (JS) |
-|----------|----------------------|-------------------|
+| Variable | Source (Python) | Source (JS) |
+|----------|----------------|-------------|
 | `input_tokens` | `UsageMetrics.input_tokens` | `inputTokens` |
 | `output_tokens` | `UsageMetrics.output_tokens` | `outputTokens` |
 | `cache_read_tokens` | `UsageMetrics.cache_read_tokens` | `cacheReadTokens` |
@@ -68,6 +92,6 @@ output_tokens * 0.5 if output_tokens > 1000 else output_tokens * 0.3
 
 ## Safety
 
-- Python: AST-based validator with strict node allowlist. No `eval()`, no `exec()`, no attribute access, no imports.
-- JavaScript: Recursive descent parser with strict allowlist. No `eval()`, no `Function()` constructor.
+- **Python:** AST-based validator with strict node allowlist. No `eval()`, no attribute access, no imports.
+- **JavaScript:** Recursive descent parser with strict allowlist. No `eval()`, no `Function()` constructor.
 - All expressions validated at config load time. Invalid configs never reach the engine.

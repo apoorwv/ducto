@@ -3,6 +3,7 @@ import type { PricingEngine } from "./engine.js";
 import { PricingEngine as PricingEngineClass } from "./engine.js";
 import type {
   AddCreditsResult,
+  AggregateStats,
   BalanceResult,
   CreditMetadata,
   DailySpendRow,
@@ -355,6 +356,11 @@ export class CreditManager {
   }
 
   // ── Usage analytics ──────────────────────────────────────────────────
+
+  /** Aggregate statistics across all users in a time window. */
+  async aggregateStats(start: Date, end: Date): Promise<AggregateStats> {
+    return await this.store.aggregateStats(start, end);
+  }
 
   /** Aggregate spend by user in a time window. */
   async spendByUser(start: Date, end: Date): Promise<SpendByUserRow[]> {

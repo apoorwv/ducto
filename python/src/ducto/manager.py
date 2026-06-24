@@ -36,6 +36,7 @@ from ducto.events import CreditEvent, CreditEventEmitter
 from ducto.interface.base import CreditStore
 from ducto.interface.models import (
     AddCreditsResult,
+    AggregateStatsRow,
     BalanceResult,
     CreditMetadata,
     DailySpendRow,
@@ -479,6 +480,10 @@ class CreditManager:
     def daily_spend(self, start: datetime, end: datetime) -> list[DailySpendRow]:
         """Daily spend aggregation in a time window."""
         return self._store.daily_spend(start, end)
+
+    def aggregate_stats(self, start: datetime, end: datetime) -> AggregateStatsRow:
+        """Aggregate statistics across all users in a time window."""
+        return self._store.aggregate_stats(start, end)
 
     def deduct_fixed(
         self,

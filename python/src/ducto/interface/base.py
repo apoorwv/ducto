@@ -13,6 +13,7 @@ from datetime import datetime
 from ducto.interface.models import (
     AddCreditsResult,
     AddTeamMemberResult,
+    AggregateStatsRow,
     AllowanceResult,
     BalanceResult,
     CapCheckResult,
@@ -274,6 +275,20 @@ class CreditStore(ABC):
 
         Returns:
             List of ``DailySpendRow`` with per-day totals.
+        """
+        ...
+
+    @abstractmethod
+    def aggregate_stats(self, start: datetime, end: datetime) -> AggregateStatsRow:
+        """Aggregate statistics across all users in a time window.
+
+        Args:
+            start: Start of time window (inclusive).
+            end: End of time window (inclusive).
+
+        Returns:
+            ``AggregateStatsRow`` with total credits consumed, active users,
+            average daily spend, top model, and top user.
         """
         ...
 

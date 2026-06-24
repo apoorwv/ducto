@@ -160,6 +160,27 @@ def test_in_operator_behavior() -> None:
     assert not _eval("20 not in 2")
 
 
+def test_percentile_function() -> None:
+    result = evaluate_expression("percentile(50, x, y, z)", {"x": 10, "y": 20, "z": 30})
+    assert result == 20.0  # median of [10, 20, 30]
+
+    result = evaluate_expression("percentile(0, x, y, z)", {"x": 10, "y": 20, "z": 30})
+    assert result == 10.0  # 0th percentile = min
+
+    result = evaluate_expression("percentile(100, x, y, z)", {"x": 10, "y": 20, "z": 30})
+    assert result == 30.0  # 100th percentile = max
+
+    result = evaluate_expression("percentile(50, x)", {"x": 42})
+    assert result == 42.0  # single value
+
+    with pytest.raises(ExpressionError):
+        evaluate_expression("percentile(50)", {"x": 1})  # not enough args
+
+
+def test_percentile_is_validated() -> None:
+    validate_expression("percentile(50, input_tokens, output_tokens)")
+
+
 def test_not_precedence() -> None:
     """Verify 'not' binds tighter than comparison (matching JS)."""
     assert _eval("not 5 > 10")  # not (5 > 10) = not False = True

@@ -154,6 +154,15 @@ export interface DailySpendRow {
   transactionCount: number;
 }
 
+/** Aggregate statistics across all users in a time window. */
+export interface AggregateStats {
+  totalCreditsConsumed: number;
+  activeUsers: number;
+  avgDailySpend: number;
+  topModel: string;
+  topUser: string;
+}
+
 // ── Spend caps and rate limiting ───────────────────────────────────────
 /** Configuration for a per-user spend cap. */
 export interface SpendCap {

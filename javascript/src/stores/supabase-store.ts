@@ -1,6 +1,7 @@
 import type {
   AddCreditsResult,
   AddTeamMemberResult,
+  AggregateStats,
   AllowanceResult,
   BalanceResult,
   CapCheckResult,
@@ -362,6 +363,22 @@ export class HttpxSupabaseStore implements CreditStore {
       totalSpend: Number(row.total_spend ?? 0),
       transactionCount: Number(row.transaction_count ?? 0),
     }));
+  }
+
+  // ── Aggregate stats ────────────────────────────────────────────────
+
+  async aggregateStats(start: Date, end: Date): Promise<AggregateStats> {
+    const row = await this.rpc("aggregate_stats", {
+      p_start: start.toISOString(),
+      p_end: end.toISOString(),
+    });
+    return {
+      totalCreditsConsumed: Number(row.total_credits_consumed ?? 0),
+      activeUsers: Number(row.active_users ?? 0),
+      avgDailySpend: Number(row.avg_daily_spend ?? 0),
+      topModel: String(row.top_model ?? ""),
+      topUser: String(row.top_user ?? ""),
+    };
   }
 
   // ── Team/shared balance pools ────────────────────────────────────────

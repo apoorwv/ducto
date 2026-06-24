@@ -290,6 +290,27 @@ class TestPlanAllowance:
 
 
 class TestUsageAnalytics:
+    def test_aggregate_stats_through_manager(self, manager: CreditManager) -> None:
+        manager.add_credits("user_1", 100)
+        manager.add_credits("user_2", 100)
+        manager.deduct(
+            user_id="user_1",
+            metrics=UsageMetrics(model="gpt-4", input_tokens=100, output_tokens=0),
+        )
+        now = datetime.now()
+        stats = manager.aggregate_stats(now - timedelta(seconds=10), now + timedelta(seconds=10))
+        assert stats.total_credits_consumed >= 1
+        assert stats.active_users >= 1
+        assert stats.top_model != ""
+        assert stats.top_user != ""
+
+    def test_aggregate_stats_empty_window(self, manager: CreditManager) -> None:
+        stats = manager.aggregate_stats(datetime(2020, 1, 1), datetime(2020, 1, 2))
+        assert stats.total_credits_consumed == 0
+        assert stats.active_users == 0
+        assert stats.top_model == ""
+        assert stats.top_user == ""
+
     def test_spend_by_user_through_manager(self, manager: CreditManager) -> None:
         manager.add_credits("user_1", 100)
         manager.deduct(

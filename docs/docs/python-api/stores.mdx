@@ -1,6 +1,6 @@
 # Store Adapters — Python
 
-Store adapters implement the `CreditStore` ABC (8 methods) for different backends.
+Store adapters implement the `CreditStore` ABC for different backends.
 
 ## MemoryStore
 
@@ -15,9 +15,23 @@ manager = CreditManager(store=store)
 
 No dependencies beyond `ducto`.
 
+Full `CreditStore` interface (18 methods):
+
+| Category | Methods |
+|----------|---------|
+| Setup | `setup(database_url?)` |
+| Balances | `get_balance(user_id)`, `add_credits(user_id, amount, type?, metadata?, expires_at?)`, `reserve_credits(user_id, amount, op_type?, metadata?, min_balance?)`, `deduct_credits(user_id, reservation_id, amount, idempotency_key?, metadata?)` |
+| Pricing | `get_active_pricing()`, `set_active_pricing(config, label?)` |
+| Plans | `get_user_plan(user_id)`, `set_user_plan(user_id, plan_id)`, `check_allowance(user_id)`, `increment_usage_window(user_id, plan_id, amount)` |
+| Spend caps | `check_spend_cap(user_id, model?, amount?)` |
+| Refunds | `refund_credits(transaction_id, amount?, reason?, metadata?)` |
+| Expiry | `sweep_expired_credits(dry_run?)` |
+| Analytics | `spend_by_user(start, end)`, `spend_by_model(start, end)`, `top_users(limit, start, end)`, `daily_spend(start, end)`, `aggregate_stats(start, end)` |
+| Teams | `create_team(name, initial_balance?)`, `get_team_balance(team_id)`, `add_team_member(team_id, user_id, role?, spend_cap?)`, `get_team_members(team_id)`, `deduct_team(team_id, user_id, amount, metadata?)` |
+
 ## HttpxSupabaseStore
 
-Production store backed by Supabase. Uses HTTPX for HTTP requests (no Supabase SDK).
+Production store backed by Supabase. Uses HTTPX for HTTP requests.
 
 ```python
 from ducto.interface.supabase import HttpxSupabaseStore
@@ -30,9 +44,9 @@ store = HttpxSupabaseStore(
 
 Requires `pip install ducto[supabase]` (installs `httpx`).
 
-### `run_migrations(database_url: str) -> MigrationResult`
+### `run_migrations(database_url: str) -> SetupResult`
 
-Run SQL migrations to create required tables.
+Run all 10 bundled SQL migrations (idempotent).
 
 ```python
 from ducto.interface.supabase import run_migrations
@@ -43,7 +57,7 @@ assert result.success, result.errors
 
 ## PostgresStore
 
-Direct PostgreSQL connection. Uses `psycopg` or `psycopg2`.
+Direct PostgreSQL connection. Uses `psycopg2`.
 
 ```python
 from ducto.interface.postgres import PostgresStore
@@ -64,10 +78,5 @@ from ducto.interface.models import ReserveResult, DeductionResult, BalanceResult
 class MyStore(CreditStore):
     async def get_balance(self, user_id: str) -> BalanceResult: ...
     async def add_credits(self, user_id: str, amount: int, **kwargs) -> AddCreditsResult: ...
-    async def reserve_credits(self, user_id: str, amount: float, **kwargs) -> ReserveResult: ...
-    async def deduct_credits(self, user_id: str, reservation_id: str, amount: float) -> DeductionResult: ...
-    async def expire_reservations(self) -> int: ...
-    # ... 3 more required methods
+    # ... 16 more required methods (see CreditStore base class)
 ```
-
-The ABC has 8 methods total. See `ducto.interface.base` for the full signature.

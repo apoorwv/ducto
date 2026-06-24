@@ -9,47 +9,76 @@ ducto/
 ├── engine.py            # PricingEngine — core calculation logic
 ├── metrics.py           # UsageMetrics, ToolCall dataclasses
 ├── breakdown.py         # CostBreakdown dataclass
-├── manager.py           # CreditManager — calculate → reserve → deduct
+├── events.py            # CreditEventEmitter — typed pub/sub for lifecycle events
+├── manager.py           # CreditManager — orchestration layer
 ├── interface/
-│   ├── base.py          # CreditStore ABC
-│   ├── models.py        # Pydantic schemas for store operations
+│   ├── base.py          # CreditStore ABC (18 abstract methods)
+│   ├── models.py        # Pydantic schemas for all store operations
 │   ├── memory.py        # MemoryStore (in-memory for testing)
 │   ├── supabase.py      # HttpxSupabaseStore adapter + run_migrations()
 │   └── postgres.py      # PostgresStore adapter
 └── sql/
     ├── 001_credit_tables.sql
     ├── 002_credit_rpcs.sql
-    └── 003_pricing_config.sql
+    ├── 003_pricing_config.sql
+    ├── 004_user_plans.sql
+    ├── 005_credit_refunds.sql
+    ├── 006_credit_expiry.sql
+    ├── 007_usage_analytics.sql
+    ├── 008_team_balances.sql
+    ├── 009_spend_caps.sql
+    └── 010_aggregate_stats.sql
 ```
 
 ## Credit Lifecycle
 
-`CreditManager` orchestrates a three-step reserve-then-deduct pattern:
+`CreditManager.deduct()` orchestrates a multi-step flow:
 
 ```
-User → CreditManager.deduct()
+User → CreditManager.deduct(metrics)
           │
-          ├─▶ 1. Calculate
+          ├─▶ 1. Calculate cost
           │     PricingEngine.calculate(UsageMetrics) → CostBreakdown
           │
-          ├─▶ 2. Reserve
+          ├─▶ 2. Consume plan allowance (if user has a plan)
+          │     store.check_allowance(user_id) → remaining allowance
+          │     store.increment_usage_window(user_id, plan_id, used)
+          │     (cost reduced by allowance amount; full coverage → skip to end)
+          │
+          ├─▶ 3. Check spend caps (if configured)
+          │     store.check_spend_cap(user_id, model, cost)
+          │     deny → raises InsufficientCreditsError
+          │     warn/notify → emits event, continues
+          │
+          ├─▶ 4. Reserve credits
           │     store.reserve_credits(user_id, amount) → ReserveResult
           │     (locks user row, auto-expires after 10 min)
           │
-          └─▶ 3. Deduct
+          └─▶ 5. Deduct
                 store.deduct_credits(user_id, reservation_id, amount)
                 → DeductionResult (idempotent, atomic)
 ```
 
-If deduct fails, the reservation auto-expires and credits return to the user.
+Additionally after step 5, emits `credits.low_balance` event if balance is at or below `min_balance * 2`.
+
+## Additional Operations
+
+- **Refunds:** `manager.refund_credits()` → store restores balance, logs refund transaction. Supports full and partial refunds with duplicate detection.
+- **Expiry:** `manager.sweep_expired_credits()` → store finds expired grants, debits balance. Dry-run mode for preview.
+- **Team deduction:** `manager.deduct_team()` → PricingEngine calculates cost → store debits team pool, enforces per-member caps.
+- **Analytics:** Queries (`spend_by_user`, `spend_by_model`, `top_users`, `daily_spend`, `aggregate_stats`) filter `credit_transactions` in a time window — backed by SQL window functions (Postgres) or in-memory scan (MemoryStore).
+
+## Events
+
+`CreditEventEmitter` is an optional typed pub/sub injected into `CreditManager`. All events fire synchronously after the operation completes. Available event types: `credits.deducted`, `credits.added`, `credits.refunded`, `credits.expired`, `credits.cap_reached`, `credits.cap_warning`, `credits.low_balance`, `credits.plan_changed`.
 
 ## Expression Safety — Python
 
 1. Parse `ast.parse(expr, mode="eval")`
-2. Walk the AST — every node type must be in an allowlist (~25 types: binary ops, comparisons, conditionals, booleans, constants, names, calls)
-3. Function calls whitelisted only: `ceil`, `floor`, `min`, `max`, `round`
-4. Rejects: attributes (`x.__class__`), subscripts (`x[0]`), lambdas, comprehensions, imports, starred expressions
-5. Evaluation namespace has `__builtins__` emptied — only the 5 whitelisted functions and user-provided variable names available
+2. Walk the AST — every node type must be in an allowlist (~25 types)
+3. Function calls whitelisted: `ceil`, `floor`, `min`, `max`, `round`, `if`, `tier`, `clamp`, `percentile`
+4. Rejects: attributes (`x.__class__`), subscripts (`x[0]`), lambdas, comprehensions, imports
+5. Evaluation namespace has `__builtins__` emptied
 6. All expression strings validated at config load time
 
 ## Expression Safety — JavaScript

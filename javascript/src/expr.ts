@@ -1,6 +1,16 @@
 import { ExpressionError } from "./errors.js";
 
-const ALLOWED_FUNCTIONS = new Set(["ceil", "floor", "min", "max", "round", "if", "tier", "clamp"]);
+const ALLOWED_FUNCTIONS = new Set([
+  "ceil",
+  "floor",
+  "min",
+  "max",
+  "round",
+  "if",
+  "tier",
+  "clamp",
+  "percentile",
+]);
 
 // ── Tokenizer ──────────────────────────────────────────────────────────────
 
@@ -545,6 +555,20 @@ function evaluateNode(node: Node, vars: Record<string, number>): number {
         }
         case "clamp":
           return Math.max(args[1], Math.min(args[0], args[2]));
+        case "percentile": {
+          if (args.length < 2)
+            throw new ExpressionError(
+              "percentile() requires at least 2 arguments (p, v1, [v2, ...])",
+            );
+          const p = args[0];
+          const sorted = args.slice(1).sort((a, b) => a - b);
+          if (sorted.length === 1) return sorted[0];
+          const rank = (p / 100) * (sorted.length - 1);
+          const lower = Math.floor(rank);
+          const upper = Math.min(lower + 1, sorted.length - 1);
+          const frac = rank - lower;
+          return sorted[lower] * (1 - frac) + sorted[upper] * frac;
+        }
         default:
           throw new ExpressionError(`disallowed function: ${node.name}`);
       }

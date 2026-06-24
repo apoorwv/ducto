@@ -296,6 +296,30 @@ describe("CreditManager", () => {
   });
 
   describe("usage analytics", () => {
+    it("aggregateStats returns aggregate data through manager", async () => {
+      manager.publishPricingFromDict(TEST_CONFIG);
+      await manager.addCredits("user-1", 500);
+      await manager.addCredits("user-2", 500);
+      await manager.deduct("user-1", { model: "gpt-4", inputTokens: 100 });
+      await manager.deduct("user-2", { model: "gpt-4", inputTokens: 50 });
+
+      const now = new Date();
+      const stats = await manager.aggregateStats(
+        new Date(now.getTime() - 1000),
+        new Date(now.getTime() + 1000),
+      );
+      expect(stats.totalCreditsConsumed).toBeGreaterThan(0);
+      expect(stats.activeUsers).toBeGreaterThanOrEqual(1);
+      expect(stats.topUser).toBeTruthy();
+    });
+
+    it("aggregateStats returns empty stats for empty window", async () => {
+      const stats = await manager.aggregateStats(new Date("2020-01-01"), new Date("2020-01-02"));
+      expect(stats.totalCreditsConsumed).toBe(0);
+      expect(stats.activeUsers).toBe(0);
+      expect(stats.topModel).toBe("");
+    });
+
     it("spendByUser delegates to store and returns results", async () => {
       manager.publishPricingFromDict(TEST_CONFIG);
       await manager.addCredits("user-1", 500);

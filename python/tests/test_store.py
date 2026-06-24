@@ -295,6 +295,31 @@ class TestUsageAnalytics:
         assert len(top) == 2
         assert top[0].total_spend >= top[1].total_spend
 
+    def test_aggregate_stats_returns_aggregates(self) -> None:
+        store = MemoryStore()
+        store.add_credits("user_1", 1000)
+        store.add_credits("user_2", 1000)
+        from ducto.interface.models import CreditMetadata
+
+        r1 = store.reserve_credits("user_1", 50, "usage")
+        store.deduct_credits("user_1", r1.reservation_id, 50, metadata=CreditMetadata(model="gpt-4"))
+        r2 = store.reserve_credits("user_2", 30, "usage")
+        store.deduct_credits("user_2", r2.reservation_id, 30, metadata=CreditMetadata(model="claude-3"))
+
+        now = datetime.now()
+        stats = store.aggregate_stats(now - timedelta(seconds=10), now + timedelta(seconds=10))
+        assert stats.total_credits_consumed == 80
+        assert stats.active_users == 2
+        assert stats.avg_daily_spend == 80
+        assert stats.top_model in ("gpt-4", "claude-3")
+        assert stats.top_user in ("user_1", "user_2")
+
+    def test_aggregate_stats_empty_window(self) -> None:
+        store = MemoryStore()
+        stats = store.aggregate_stats(datetime(2020, 1, 1), datetime(2020, 1, 2))
+        assert stats.total_credits_consumed == 0
+        assert stats.active_users == 0
+
     def test_daily_spend_bucketing_correct(self) -> None:
         store = MemoryStore()
         store.add_credits("user_1", 1000)

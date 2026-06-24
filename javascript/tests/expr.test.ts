@@ -209,6 +209,44 @@ describe("evaluateExpression", () => {
     expect(evaluateExpression("5 if not (tool_calls > 10) else 10", { tool_calls: 15 })).toBe(10);
   });
 
+  it("evaluates percentile function — median", () => {
+    expect(
+      evaluateExpression("percentile(50, input_tokens, output_tokens, tool_calls)", {
+        input_tokens: 10,
+        output_tokens: 20,
+        tool_calls: 30,
+      }),
+    ).toBe(20);
+  });
+
+  it("evaluates percentile function — min", () => {
+    expect(
+      evaluateExpression("percentile(0, input_tokens, output_tokens, tool_calls)", {
+        input_tokens: 10,
+        output_tokens: 20,
+        tool_calls: 30,
+      }),
+    ).toBe(10);
+  });
+
+  it("evaluates percentile function — max", () => {
+    expect(
+      evaluateExpression("percentile(100, input_tokens, output_tokens, tool_calls)", {
+        input_tokens: 10,
+        output_tokens: 20,
+        tool_calls: 30,
+      }),
+    ).toBe(30);
+  });
+
+  it("evaluates percentile with single value", () => {
+    expect(evaluateExpression("percentile(50, input_tokens)", { input_tokens: 42 })).toBe(42);
+  });
+
+  it("validates percentile function", () => {
+    expect(() => validateExpression("percentile(50, input_tokens, output_tokens)")).not.toThrow();
+  });
+
   it("evaluates double negation", () => {
     expect(evaluateExpression("0 if not not (tool_calls > 0) else 5", { tool_calls: 10 })).toBe(0);
     expect(evaluateExpression("0 if not not (tool_calls > 0) else 5", { tool_calls: 0 })).toBe(5);

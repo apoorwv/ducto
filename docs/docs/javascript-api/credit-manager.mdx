@@ -11,16 +11,18 @@ const store = new MemoryStore();
 const manager = new CreditManager(store);
 ```
 
-Optionally pass a pre-configured `PricingEngine`:
+Optionally pass a pre-configured `PricingEngine` and/or `CreditEventEmitter`:
 
 ```typescript
-const engine = PricingEngine.fromDict({...});
-const manager = new CreditManager(store, engine);
+import { CreditEventEmitter } from "@apoorwv/ducto";
+
+const emitter = new CreditEventEmitter();
+const manager = new CreditManager(store, engine, emitter);
 ```
 
 ## Pricing
 
-### `publishPricingFromDict(data: PricingConfigData): void`
+### `publishPricingFromDict(data)`
 
 ```typescript
 manager.publishPricingFromDict({
@@ -29,32 +31,159 @@ manager.publishPricingFromDict({
 });
 ```
 
-### `loadPricingFromStore(): Promise<void>`
+### `loadPricingFromStore()`
 
 Fetch active pricing from the database store.
 
-### `publishPricing(config: PricingConfig, label?: string): void`
+### `publishPricing(config, label?)`
 
 Load from a `PricingConfig` object.
 
 ## Balance Operations
 
-### `addCredits(userId: string, amount: number, type?: string, metadata?: Record<string, unknown>): Promise<AddCreditsResult>`
+### `addCredits(userId, amount, type?, metadata?, expiresAt?)`
 
-### `getBalance(userId: string): Promise<BalanceResult>`
+Add credits. Optional `expiresAt` for time-bound credits.
 
-### `reserveCredits(userId: string, amount: number, opType?: string, metadata?: Record<string, unknown>, minBalance?: number): Promise<ReserveResult>`
+### `getBalance(userId)`
 
-### `deduct(userId: string, metrics: UsageMetricsLike, idempotencyKey: string, metadata?: Record<string, unknown>): Promise<DeductionResult>`
+### `reserveCredits(userId, amount, opType?, metadata?, minBalance?)`
 
-Full reserve-then-deduct lifecycle. Returns deduction result with `amount`, `balanceBefore`, `balanceAfter`.
+### `deduct(userId, metrics, idempotencyKey?, metadata?)`
 
-### `deductFixed(userId: string, jobName: string, idempotencyKey: string, metadata?: Record<string, unknown>): Promise<DeductionResult>`
+Full lifecycle: calculate cost → consume plan allowance → check spend caps → reserve → deduct.
 
-Deduct a fixed cost.
+### `deductFixed(userId, jobName, idempotencyKey?, metadata?)`
+
+Deduct a fixed cost (configured in pricing `fixed` section).
+
+## Plan Management
+
+Plans provide free monthly allowances consumed before balance deductions.
+
+### `store.setUserPlan(userId, planId)`
+
+Assign a plan to a user.
+
+### `store.getUserPlan(userId)`
+
+Get user's current plan details.
+
+### `store.checkAllowance(userId)`
+
+Get remaining free allowance for the current billing period.
+
+Example — full plan coverage skips balance deduction:
+
+```typescript
+manager.publishPricingFromDict({
+  version: 2,
+  models: { "_default": "input_tokens * 1" },
+  plans: { free: { id: "free", name: "Free", freeAllowance: 100 } },
+});
+await store.setUserPlan("user-1", "free");
+await store.addCredits("user-1", 10);
+const result = await manager.deduct("user-1", { inputTokens: 5 });
+// result.amount === 0, balance unchanged — fully covered by allowance
+```
+
+## Refunds
+
+### `refundCredits(transactionId, amount?, reason?, metadata?)`
+
+Refund a previous deduction. Supports partial refunds. Returns error for duplicate refunds or unknown transactions.
+
+```typescript
+const result = await manager.refundCredits(txId);
+// result.amount === 1, result.newBalance === 100
+```
+
+## Usage Analytics
+
+Time-windowed aggregation queries. All accept `start` / `end` `Date` range.
+
+| Method | Returns |
+|--------|---------|
+| `spendByUser(start, end)` | `SpendByUserRow[]` — per-user totals |
+| `spendByModel(start, end)` | `SpendByModelRow[]` — per-model spend |
+| `topUsers(limit, start, end)` | `TopUserRow[]` — sorted by spend desc |
+| `dailySpend(start, end)` | `DailySpendRow[]` — bucketed by day |
+| `aggregateStats(start, end)` | `AggregateStats` — total, active users, avg daily, top model, top user |
+
+## Credit Expiry
+
+### `sweepExpiredCredits(dryRun?)`
+
+Sweep expired credits from all users' balances. Dry-run reports without modifying.
+
+```typescript
+await manager.addCredits("user-1", 100, "purchase", null, new Date("2024-01-01"));
+const result = await manager.sweepExpiredCredits();
+// result.expiredCount === 1, result.expiredAmount === 100
+const dryRun = await manager.sweepExpiredCredits(true);
+// dryRun === true, balance unchanged
+```
+
+## Spend Caps
+
+Per-user daily/monthly spend limits configured at the store level.
+
+```
+store.setSpendCap({
+  userId: "user-1",
+  type: "daily",
+  limit: 50,
+  action: "deny",      // "deny" | "warn" | "notify"
+  model: "gpt-4",       // optional per-model cap
+});
+```
+
+- **deny** — throws `InsufficientCreditsError` when exceeded
+- **warn** — emits `credits.cap_warning` event but allows the deduction
+- **notify** — emits `credits.cap_warning` event
+
+## Team / Shared Balances
+
+Teams have their own credit pool separate from individual user balances.
+
+| Method | Description |
+|--------|-------------|
+| `store.createTeam(name, initialBalance?)` | Create team with shared pool |
+| `store.getTeamBalance(teamId)` | Fetch team balance + member count |
+| `store.addTeamMember(teamId, userId, role?, spendCap?)` | Add member with optional per-user cap |
+| `store.getTeamMembers(teamId)` | List team members with spend + caps |
+| `store.deductTeam(teamId, userId, cost, metadata?)` | Deduct from team pool (user-attributed) |
+| `manager.deductTeam(teamId, userId, metrics, metadata?)` | Pricing-engine cost + team deduction |
+
+```typescript
+const team = await store.createTeam("Engineering", 1000);
+await store.addTeamMember(team.teamId, "user-1", "admin", { spendCap: 500 });
+const result = await manager.deductTeam(team.teamId, "user-1", { inputTokens: 100 });
+// result.amount === -100, result.teamBalanceAfter === 900
+```
+
+## Events
+
+Optional pub/sub event system for credit lifecycle events.
+
+```typescript
+import { CreditEventEmitter } from "@apoorwv/ducto";
+
+const emitter = new CreditEventEmitter();
+const manager = new CreditManager(store, null, emitter);
+
+emitter.on("credits.deducted", (event) => {
+  console.log(`${event.userId} spent ${event.data?.amount} credits`);
+});
+
+// Available events:
+// "credits.deducted" | "credits.added" | "credits.refunded"
+// | "credits.expired" | "credits.cap_reached"
+// | "credits.cap_warning" | "credits.low_balance"
+```
 
 ## Properties
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `pricingEngine` | `PricingEngine \| null` | The internal engine |
+| `pricingEngine` | `PricingEngine \| null` | Internal engine (null until loaded) |

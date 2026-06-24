@@ -1,8 +1,8 @@
 # Pricing Configuration
 
-The pricing config is a JSON object stored in `credit_pricing_config` table (via `set_active_pricing_config` RPC) or loaded from a dict.
+The pricing config is stored in the `credit_pricing_config` table or loaded from a dict.
 
-## Schema
+## Version 1 (v1) — Flat Pricing
 
 ```json
 {
@@ -15,103 +15,137 @@ The pricing config is a JSON object stored in `credit_pricing_config` table (via
     "_default": "tool_calls * 5 / 1000",
     "code_exec": "tool_calls * 10 / 1000"
   },
-  "search": {
-    "costs": "search_queries * 0.5 + search_results * 0.05"
-  },
-  "cache": {
-    "discount": "-cache_read_tokens * 0.0045"
-  },
-  "fixed": {
-    "batch_train": 100,
-    "daily_report": 10
-  },
+  "search": { "costs": "search_queries * 0.5 + search_results * 0.05" },
+  "cache": { "discount": "-cache_read_tokens * 0.0045" },
+  "fixed": { "batch_train": 100, "daily_report": 10 },
   "min_balance": 5
 }
 ```
+
+## Version 2 (v2) — Plan-Based Pricing
+
+Extends v1 with subscription plan definitions. Plans give users free monthly allowances, rate overrides, and feature gating metadata.
+
+```json
+{
+  "version": 2,
+  "models": {
+    "_default": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)"
+  },
+  "plans": {
+    "free": {
+      "id": "free",
+      "name": "Free Tier",
+      "free_allowance": 50000,
+      "rate_overrides": {
+        "_default": "input_tokens * (0.02 / 1000) + output_tokens * (0.06 / 1000)"
+      },
+      "features": { "max_concurrency": 1, "max_context": 4096 }
+    },
+    "pro": {
+      "id": "pro",
+      "name": "Pro Plan",
+      "free_allowance": 500000,
+      "rate_overrides": {
+        "gpt-4": "input_tokens * (0.005 / 1000) + output_tokens * (0.015 / 1000)"
+      }
+    }
+  }
+}
+```
+
+### Plan fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Unique plan identifier |
+| `name` | string | yes | Human-readable name |
+| `free_allowance` | int | yes | Monthly free credits (0 = none) |
+| `rate_overrides` | object | no | Per-model expression overrides for this plan |
+| `features` | object | no | Arbitrary feature flags (not enforced by ducto) |
+
+### How plans work
+
+1. **Assign a plan:** `store.set_user_plan(user_id, "pro")`
+2. **Deduct flow:** `CreditManager.deduct()` checks plan allowance first. If allowance covers the cost, no balance deduction. Partial coverage deducts remainder from balance.
+3. **No plan:** Existing balance-only deduct flow unchanged.
 
 ## Sections
 
 ### `version` (required)
 
-Currently `1`. Used for forward compatibility.
+- `1` — flat pricing, no plans
+- `2` — supports optional `plans` object
 
 ### `models` (required)
 
-Per-model pricing expressions. Must be a non-empty dict.
+Per-model pricing expressions. Non-empty dict.
 
-- Keys are model names (e.g., `gpt-4`, `claude-3-opus`)
-- `_default` is used when no specific model matches UsageMetrics
+- Keys are model names (e.g. `gpt-4`, `claude-3-opus`)
+- `_default` used when no specific model matches
 - Each value is an expression string
 
 ### `tools` (optional)
 
-Per-tool pricing overrides.
-
-- `_default` applies to tool calls not individually configured
-- Tools with explicit entries evaluated separately
-- Remaining calls use `_default`
-- No double-counting: a tool call is only charged once
+Per-tool pricing overrides. `_default` applies to tool calls not individually configured.
 
 ### `search` (optional)
 
 Search/RAG query pricing.
 
-- `costs` expression for search-related operations
-
 ### `cache` (optional)
 
-Cache read discounts.
-
-- `discount` is typically negative (savings/rebate applied to total)
+Cache read discounts (typically negative — savings rebate).
 
 ### `fixed` (optional)
 
-Fixed-cost jobs.
-
-- Keys are job names (matched against `UsageMetrics.fixed_job`)
-- Values are non-negative integers
+Fixed-cost jobs. Keys match `UsageMetrics.fixed_job`. Values are non-negative integers.
 
 ### `min_balance` (optional)
 
-Minimum balance floor. Default varies by implementation.
+Minimum balance floor (default 5).
 
-## Loading from File
-
-Parse a YAML or JSON file and pass to the pricing API:
+## Loading
 
 ```python
-# Python
+from ducto import PricingEngine
+
+# From dict (v1 or v2)
+engine = PricingEngine.from_dict({"version": 1, "models": {"_default": "input_tokens * 1"}})
+
+# From file (YAML/JSON)
 import yaml
 with open("pricing.yaml") as f:
-    data = yaml.safe_load(f)
-engine = PricingEngine.from_dict(data)
+    engine = PricingEngine.from_dict(yaml.safe_load(f))
 ```
 
 ```typescript
-// JavaScript
-import { loadPricingFile } from "@apoorwv/ducto";
+import { PricingEngine, loadPricingFile } from "@apoorwv/ducto";
+
+const engine = PricingEngine.fromDict({ version: 1, models: { _default: "input_tokens * 1" } });
+
 const data = await loadPricingFile("./pricing.yaml");
-const engine = PricingEngine.fromDict(data);
+const engine2 = PricingEngine.fromDict(data);
 ```
 
 ## Live Updates
 
-Pricing stored in `credit_pricing_config` table. Update via CLI:
+Pricing stored in `credit_pricing_config` table. Update via CLI or RPC — no redeploy needed.
 
 ```bash
 ducto pricing set config.json
 ```
 
-Or via RPC. No code redeploy needed — `CreditManager.load_pricing_from_store()` fetches the latest.
+`CreditManager.load_pricing_from_store()` fetches latest config.
 
 ## Validation
 
-At load time, the engine:
+At load time the engine validates:
 
-1. Validates version field
-2. Checks `models` is non-empty
-3. Parses and validates all expression strings
-4. Confirms allowed functions only
-5. Rejects unknown sections
-
-Invalid configs are rejected with descriptive errors before they reach the engine.
+1. Version field (`1` or `2`)
+2. `models` is non-empty
+3. All expression strings parse and are safe
+4. Only allowed functions used
+5. Plan names are unique (v2)
+6. Plan `rate_overrides` expressions are valid (v2)
+7. No unknown sections

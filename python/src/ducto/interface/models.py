@@ -210,6 +210,16 @@ class DailySpendRow(BaseModel):
     transaction_count: int = 0
 
 
+class AggregateStatsRow(BaseModel):
+    """Aggregate statistics across all users in a time window."""
+
+    total_credits_consumed: int = 0
+    active_users: int = 0
+    avg_daily_spend: int = 0
+    top_model: str = ""
+    top_user: str = ""
+
+
 # ── Spend caps and rate limiting ───────────────────────────────────────
 
 

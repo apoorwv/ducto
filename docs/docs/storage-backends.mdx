@@ -12,28 +12,36 @@ ducto abstracts storage behind the `CreditStore` interface. Three built-in imple
 
 ## CreditStore Interface
 
-The `CreditStore` ABC/interface defines 8 methods:
+The `CreditStore` ABC/interface defines all operations. Implementations exist for Memory, Postgres, and Supabase.
 
-| Method | Description |
-|--------|-------------|
-| `get_balance(user_id)` | Get current balance |
-| `add_credits(user_id, amount, ...)` | Add credits to balance |
-| `reserve_credits(user_id, amount, ...)` | Lock credits with reservation |
-| `deduct_credits(user_id, reservation_id, amount)` | Atomically deduct reserved credits |
-| `expire_reservations()` | Expire stale reservations |
-| `get_pricing_config()` | Fetch active pricing config |
-| `set_pricing_config(config, label?)` | Set active pricing config |
-| `close()` | Cleanup connections |
+| Category | Methods |
+|----------|---------|
+| Balances | `get_balance`, `add_credits`, `reserve_credits`, `deduct_credits` |
+| Pricing | `get_active_pricing`, `set_active_pricing` |
+| Plans | `get_user_plan`, `set_user_plan`, `check_allowance`, `increment_usage_window` |
+| Spend caps | `check_spend_cap` |
+| Refunds | `refund_credits` |
+| Expiry | `sweep_expired_credits` |
+| Analytics | `spend_by_user`, `spend_by_model`, `top_users`, `daily_spend`, `aggregate_stats` |
+| Teams | `create_team`, `get_team_balance`, `add_team_member`, `get_team_members`, `deduct_team` |
+| Setup | `setup` |
 
 ## SQL Migrations
 
-Three bundled SQL files create the required schema:
+Ten bundled SQL files create the required schema:
 
 | File | Creates |
 |------|---------|
 | `001_credit_tables.sql` | `user_credits`, `credit_transactions`, `credit_reservations` tables, RLS policies, signup bonus trigger |
-| `002_credit_rpcs.sql` | `credits_add`, `reserve_credits`, `deduct_credits`, `get_credits_balance` RPCs (SECURITY DEFINER) |
-| `003_pricing_config.sql` | `credit_pricing_config` table, `get_active_pricing_config`, `set_active_pricing_config` RPCs |
+| `002_credit_rpcs.sql` | Core RPCs: `credits_add`, `reserve_credits`, `deduct_credits`, `get_credits_balance` |
+| `003_pricing_config.sql` | `credit_pricing_config` table, get/set RPCs |
+| `004_user_plans.sql` | `credit_plans`, `credit_usage_window` tables, plan RPCs |
+| `005_credit_refunds.sql` | `refund_credits` RPC with duplicate detection and partial refunds |
+| `006_credit_expiry.sql` | `expire_credits` RPC with dry-run support |
+| `007_usage_analytics.sql` | `spend_by_user`, `spend_by_model`, `top_users`, `daily_spend` RPCs |
+| `008_team_balances.sql` | `credit_teams`, `credit_team_members` tables, team RPCs |
+| `009_spend_caps.sql` | `credit_spend_caps` table, `check_spend_cap` RPC |
+| `010_aggregate_stats.sql` | `aggregate_stats` RPC returning JSON |
 
 All DDL is idempotent (`IF NOT EXISTS` / `CREATE OR REPLACE`).
 

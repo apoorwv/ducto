@@ -1,6 +1,6 @@
-# CreditManager
+# CreditManager — Python
 
-The `CreditManager` orchestrates the full credit lifecycle: calculate cost, reserve credits, deduct from balance. It wraps a `PricingEngine` and a `CreditStore`.
+Orchestrates the full credit lifecycle: calculate → reserve → deduct.
 
 ## Constructor
 
@@ -10,57 +10,190 @@ from ducto.interface.memory import MemoryStore
 
 store = MemoryStore()
 manager = CreditManager(store=store)
-# Pricing engine loaded lazily — must call load_pricing_from_store() or publish_pricing_from_dict()
+```
+
+Optionally pass a pre-configured `PricingEngine` and/or `CreditEventEmitter`:
+
+```python
+from ducto.events import CreditEventEmitter
+
+emitter = CreditEventEmitter()
+manager = CreditManager(store=store, engine=engine, emitter=emitter)
 ```
 
 ## Pricing
 
-### `load_pricing_from_store() -> None`
+### `publish_pricing_from_dict(data)`
 
-Fetch the active pricing config from the database store and initialize the internal `PricingEngine`. Call after connecting to a store that has pricing configured.
+```python
+manager.publish_pricing_from_dict({
+    "version": 1,
+    "models": {"_default": "input_tokens * (0.001 / 1000)"},
+})
+```
 
-### `publish_pricing_from_dict(data: dict) -> None`
+### `load_pricing_from_store()`
 
-Load pricing from a dict (no database needed). Useful for testing or stateless modes.
+Fetch active pricing from the database store.
 
-### `publish_pricing(config: PricingConfig, label: str | None = None) -> None`
+### `publish_pricing(config, label=None)`
 
-Load pricing from a `PricingConfig` object directly.
+Load from a `PricingConfigData` object.
 
 ## Balance Operations
 
-### `add_credits(user_id: str, amount: int, type: str = "admin_adjustment", metadata: dict | None = None) -> AddCreditsResult`
+### `add_credits(user_id, amount, type="adjustment", metadata=None, expires_at=None)`
 
-Add credits to a user's balance.
+Add credits. Optional `expires_at` for time-bound credits.
 
-### `get_balance(user_id: str) -> BalanceResult`
+### `get_balance(user_id)`
 
-Get the current balance for a user.
+### `reserve_credits(user_id, amount, op_type="usage", metadata=None, min_balance=None)`
 
-### `reserve_credits(user_id: str, amount: float, op_type: str = "deduct", metadata: dict | None = None, min_balance: int | None = None) -> ReserveResult`
+### `deduct(user_id, metrics, idempotency_key=None, metadata=None)`
 
-Reserve credits before deduction. Reservations auto-expire after 10 minutes.
+Full lifecycle: calculate cost → consume plan allowance → check spend caps → reserve → deduct.
 
-### `deduct(user_id: str, metrics: UsageMetrics, idempotency_key: str, metadata: dict | None = None) -> DeductionResult`
+### `deduct_fixed(user_id, job_name, idempotency_key=None, metadata=None)`
 
-Full reserve-then-deduct lifecycle. Calculates cost from metrics, reserves credits, then deducts. Returns `DeductionResult` with `amount`, `balance_before`, `balance_after`, and breakdown.
+Deduct a fixed cost (configured in pricing `fixed` section).
 
-### `deduct_fixed(user_id: str, job_name: str, idempotency_key: str, metadata: dict | None = None) -> DeductionResult`
+## Plan Management
 
-Deduct a fixed cost (configured in pricing config's `fixed` section).
+Plans provide free monthly allowances consumed before balance deductions.
+
+### `store.set_user_plan(user_id, plan_id)`
+
+Assign a plan to a user.
+
+### `store.get_user_plan(user_id)`
+
+Get user's current plan details.
+
+### `store.check_allowance(user_id)`
+
+Get remaining free allowance for the current billing period.
+
+Example — full plan coverage skips balance deduction:
+
+```python
+v2 = PricingConfigV2(
+    version=2,
+    models={"_default": "input_tokens * 1"},
+    plans={"free": PlanDefinition(id="free", name="Free", free_allowance=100)},
+)
+store.set_active_pricing(v2)
+store.set_user_plan("user_1", "free")
+store.add_credits("user_1", 10)
+
+result = manager.deduct("user_1", UsageMetrics(input_tokens=5))
+assert result.amount == 0       # fully covered by allowance
+assert result.balance_after == 10  # balance unchanged
+```
+
+## Refunds
+
+### `refund_credits(transaction_id, amount=None, reason=None, metadata=None)`
+
+Refund a previous deduction. Supports partial refunds. Returns error for duplicates.
+
+```python
+result = manager.refund_credits(tx_id)
+assert result.amount == 1
+assert result.new_balance == 100
+```
+
+## Usage Analytics
+
+Time-windowed aggregation queries. All accept `start` / `end` `datetime` range.
+
+| Method | Returns |
+|--------|---------|
+| `spend_by_user(start, end)` | `list[SpendByUserRow]` — per-user totals |
+| `spend_by_model(start, end)` | `list[SpendByModelRow]` — per-model spend |
+| `top_users(limit, start, end)` | `list[TopUserRow]` — sorted by spend desc |
+| `daily_spend(start, end)` | `list[DailySpendRow]` — bucketed by day |
+| `aggregate_stats(start, end)` | `AggregateStatsRow` — total, active users, avg daily, top model, top user |
+
+## Credit Expiry
+
+### `sweep_expired_credits(dry_run=False)`
+
+Sweep expired credits from all users' balances. Dry-run reports without modifying.
+
+```python
+manager.add_credits("user_1", 100, "purchase", expires_at=datetime(2024, 1, 1))
+result = manager.sweep_expired_credits()
+assert result.expired_count == 1
+assert result.expired_amount == 100
+
+dry_run = manager.sweep_expired_credits(dry_run=True)
+assert dry_run.dry_run is True  # balance unchanged
+```
+
+## Spend Caps
+
+Per-user daily/monthly spend limits configured at the store level.
+
+```python
+from ducto.interface.models import SpendCap
+
+store.set_spend_cap(SpendCap(
+    user_id="user-1",
+    cap_type="daily",
+    limit=50,
+    action="deny",       # "deny" | "warn" | "notify"
+    model="gpt-4",       # optional per-model cap
+))
+```
+
+- **deny** — raises `InsufficientCreditsError` when exceeded
+- **warn** — emits `credits.cap_warning` event but allows deduction
+- **notify** — emits `credits.cap_warning` event
+
+## Team / Shared Balances
+
+Teams have their own credit pool separate from individual user balances.
+
+| Method | Description |
+|--------|-------------|
+| `store.create_team(name, initial_balance=0)` | Create team with shared pool |
+| `store.get_team_balance(team_id)` | Fetch team balance + member count |
+| `store.add_team_member(team_id, user_id, role="member", spend_cap=None)` | Add member with optional per-user cap |
+| `store.get_team_members(team_id)` | List team members with spend + caps |
+| `store.deduct_team(team_id, user_id, amount, metadata=None)` | Deduct from team pool |
+| `manager.deduct_team(team_id, user_id, metrics, metadata=None)` | Pricing-engine cost + team deduction |
+
+```python
+team = store.create_team("Engineering", 1000)
+store.add_team_member(team.team_id, "user-1", role="admin", spend_cap=500)
+result = manager.deduct_team(team.team_id, "user-1", UsageMetrics(input_tokens=100))
+assert result.amount == -100
+assert result.team_balance_after == 900
+```
+
+## Events
+
+Optional pub/sub event system for credit lifecycle events.
+
+```python
+from ducto.events import CreditEvent, CreditEventEmitter
+
+emitter = CreditEventEmitter()
+manager = CreditManager(store=store, emitter=emitter)
+
+@emitter.on("credits.deducted")
+def handle_deduct(event: CreditEvent):
+    print(f"{event.user_id} spent {event.data['amount']} credits")
+
+# Available event types:
+# "credits.deducted" | "credits.added" | "credits.refunded"
+# | "credits.expired" | "credits.cap_reached"
+# | "credits.cap_warning" | "credits.low_balance" | "credits.plan_changed"
+```
 
 ## Properties
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `pricing_engine` | `PricingEngine` `|` `None` | The internal engine (None until pricing loaded) |
-
-## Credit Lifecycle
-
-The reserve-then-deduct pattern prevents double-charging:
-
-1. **Calculate** — `PricingEngine.calculate(UsageMetrics)` → `CostBreakdown`
-2. **Reserve** — `store.reserve_credits(user_id, amount)` locks the row; expires in 10 min
-3. **Deduct** — `store.deduct_credits(user_id, reservation_id, amount)` — idempotent, atomic
-
-If step 3 fails, the reservation auto-expires and credits are returned to the user.
+| `engine` | `PricingEngine \| None` | Internal engine (None until loaded) |

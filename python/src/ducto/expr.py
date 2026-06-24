@@ -10,7 +10,7 @@ import math
 import re
 from typing import Any
 
-ALLOWED_FUNCTIONS = {"ceil", "floor", "min", "max", "round", "if", "tier", "clamp", "_ducto_if"}
+ALLOWED_FUNCTIONS = {"ceil", "floor", "min", "max", "round", "if", "tier", "clamp", "percentile", "_ducto_if"}
 ALLOWED_NODES = frozenset(
     {
         ast.Module,
@@ -99,7 +99,27 @@ def _clamp(*args: float) -> float:
     return max(args[1], min(args[0], args[2]))
 
 
-CUSTOM_FUNCTIONS = {"_ducto_if": _if, "tier": _tier, "clamp": _clamp}
+def _percentile(*args: float) -> float:
+    """Compute the p-th percentile of values (p in 0..100).
+
+    percentile(p, v1, v2, ...) — sorts v1..vN and returns the value
+    at the p-th percentile using linear interpolation.
+    """
+    if len(args) < 2:
+        raise ExpressionError("percentile() requires at least 2 arguments (p, v1, [v2, ...])")
+    p = args[0]
+    values = sorted(args[1:])
+    n = len(values)
+    if n == 1:
+        return values[0]
+    rank = p / 100.0 * (n - 1)
+    lower = int(rank)
+    upper = min(lower + 1, n - 1)
+    frac = rank - lower
+    return values[lower] * (1 - frac) + values[upper] * frac
+
+
+CUSTOM_FUNCTIONS = {"_ducto_if": _if, "tier": _tier, "clamp": _clamp, "percentile": _percentile}
 
 # Names exempt from variable checks (functions + eval utilities)
 _SAFE_NAMES: set[str] = ALLOWED_FUNCTIONS | {"str"}
