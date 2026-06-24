@@ -37,6 +37,10 @@ from ducto.interface.models import (
 )
 
 
+class StoreError(Exception):
+    """Base exception for store-level errors (connection, timeout, etc.)."""
+
+
 class CreditStore(ABC):
     """Interface for credit storage backends.
 

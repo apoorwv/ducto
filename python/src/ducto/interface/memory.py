@@ -114,20 +114,20 @@ class MemoryStore(CreditStore):
         self,
         user_id: str,
         amount: int,
-        tx_type: str = "adjustment",
+        type: str = "adjustment",
         metadata: CreditMetadata | None = None,
         expires_at: datetime | None = None,
     ) -> AddCreditsResult:
         current = self._balances.get(user_id, 0)
         self._balances[user_id] = current + amount
-        self._lifetime[user_id] = self._lifetime.get(user_id, 0) + (amount if tx_type == "purchase" else 0)
+        self._lifetime[user_id] = self._lifetime.get(user_id, 0) + (amount if type == "purchase" else 0)
 
         tx_id = str(uuid.uuid4())
         tx = _TransactionRecord(
             id=tx_id,
             user_id=user_id,
             amount=amount,
-            type=tx_type,
+            type=type,
             metadata=metadata.model_dump() if metadata else {},
             created_at=datetime.now().isoformat(),
         )
@@ -397,6 +397,7 @@ class MemoryStore(CreditStore):
         """Sweep expired credits from all users' balances."""
         now = datetime.now()
         expired_by_user: dict[str, int] = {}
+        expired_txs: list[_TransactionRecord] = []
 
         for tx in self._transactions:
             if tx.expires_at and tx.type in ("purchase", "adjustment"):
@@ -406,6 +407,7 @@ class MemoryStore(CreditStore):
                     continue
                 if expires_dt <= now:
                     expired_by_user[tx.user_id] = expired_by_user.get(tx.user_id, 0) + tx.amount
+                    expired_txs.append(tx)
 
         expired_count = 0
         expired_amount = 0
@@ -420,6 +422,11 @@ class MemoryStore(CreditStore):
 
                 if not dry_run:
                     self._balances[user_id] = current_balance - to_expire
+
+                    # Null out expires_at on swept grants to prevent re-sweeping
+                    for et in expired_txs:
+                        if et.user_id == user_id:
+                            et.expires_at = None
 
                     tx_id = str(uuid.uuid4())
                     self._transactions.append(

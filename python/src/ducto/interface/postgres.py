@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from ducto.interface.base import CreditStore
+import psycopg2
+
+from ducto.interface.base import CreditStore, StoreError
 from ducto.interface.models import (
     AddCreditsResult,
     AddTeamMemberResult,
@@ -50,9 +52,10 @@ class PostgresStore(CreditStore):
         self._database_url = database_url
 
     def _conn(self):
-        import psycopg2
-
-        return psycopg2.connect(self._database_url)
+        try:
+            return psycopg2.connect(self._database_url)
+        except psycopg2.Error as e:
+            raise StoreError(f"database connection failed: {e}") from e
 
     # ── Schema management ──────────────────────────────────────────────
 
