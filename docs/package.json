@@ -3,6 +3,8 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
+    "prebuild": "bash scripts/gen-api-docs.sh",
+    "prestart": "bash scripts/gen-api-docs.sh",
     "docusaurus": "docusaurus",
     "start": "docusaurus start",
     "build": "docusaurus build",
@@ -29,6 +31,8 @@
     "@docusaurus/tsconfig": "3.10.1",
     "@docusaurus/types": "3.10.1",
     "@types/react": "^19.0.0",
+    "typedoc": "^0.28.0",
+    "typedoc-plugin-markdown": "^4.6.0",
     "typescript": "~6.0.2"
   },
   "browserslist": {

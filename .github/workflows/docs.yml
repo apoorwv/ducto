@@ -2,7 +2,7 @@ name: Deploy Docs
 on:
   push:
     branches: [main]
-    paths: ['docs/**', '.github/workflows/docs.yml']
+    paths: ['docs/**', 'python/**', 'javascript/**', '.github/workflows/docs.yml']
   workflow_dispatch:
 
 permissions:
@@ -25,6 +25,14 @@ jobs:
         working-directory: docs
     steps:
       - uses: actions/checkout@v7
+      - name: Setup Python (for API docs generation)
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Python package + Sphinx
+        run: |
+          pip install -e "../python/"
+          pip install sphinx sphinx-markdown-builder
       - uses: actions/setup-node@v6
         with:
           node-version: 24

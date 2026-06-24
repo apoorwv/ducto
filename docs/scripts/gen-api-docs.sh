@@ -1,0 +1,51 @@
+#!/bin/bash
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DOCS_DIR="$SCRIPT_DIR/.."
+REPO_DIR="$DOCS_DIR/.."
+
+echo "--- Generating API docs ---"
+
+# ── Python API docs (optional — requires sphinx + sphinx-markdown-builder) ──
+if python3 -c "import sphinx; import sphinx_markdown_builder" 2>/dev/null; then
+  PYTHON_SRC="$REPO_DIR/python/src/ducto"
+  PYTHON_OUT="$DOCS_DIR/docs/python-api/reference"
+  mkdir -p "$PYTHON_OUT" /tmp/ducto-sphinx /tmp/ducto-sphinx-out
+
+  echo "[python] Running sphinx-apidoc..."
+  python3 -m sphinx.ext.apidoc --force -o /tmp/ducto-sphinx "$PYTHON_SRC"
+
+  echo "[python] Building markdown..."
+  sphinx-build -b markdown -c "$SCRIPT_DIR" /tmp/ducto-sphinx /tmp/ducto-sphinx-out
+
+  mkdir -p "$PYTHON_OUT"
+  cp /tmp/ducto-sphinx-out/*.md "$PYTHON_OUT/" 2>/dev/null
+  echo "[python] Wrote $(ls "$PYTHON_OUT"/*.md 2>/dev/null | wc -l) files"
+  rm -rf /tmp/ducto-sphinx /tmp/ducto-sphinx-out
+else
+  echo "[python] Skipped — sphinx/sphinx_markdown_builder not installed"
+fi
+
+# ── JS API docs (optional — requires typedoc) ──
+TYPEDOC="$DOCS_DIR/node_modules/.bin/typedoc"
+if [ -f "$TYPEDOC" ]; then
+  JS_SRC="$REPO_DIR/javascript/src"
+  JS_OUT="$DOCS_DIR/docs/javascript-api/reference"
+  mkdir -p "$JS_OUT"
+
+  echo "[javascript] Running typedoc..."
+  cd "$REPO_DIR/javascript"
+  "$TYPEDOC" \
+    --plugin typedoc-plugin-markdown \
+    --out "$JS_OUT" \
+    --readme none \
+    --hideBreadcrumbs \
+    --hidePageHeader \
+    "$JS_SRC/index.ts" 2>/dev/null
+
+  echo "[javascript] Done — $(ls "$JS_OUT"/*.md 2>/dev/null | wc -l) files"
+else
+  echo "[javascript] Skipped — typedoc not installed in docs/node_modules"
+fi
+
+echo "--- API docs generation complete ---"
