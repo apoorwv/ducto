@@ -37,6 +37,9 @@ jobs:
         with:
           node-version: 24
       - run: npm ci
+      - name: Install JS package deps (for TypeDoc)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: javascript
       - run: npm run build
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v5

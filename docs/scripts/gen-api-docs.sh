@@ -27,11 +27,4 @@ else
   echo "[python] Skipped — sphinx/sphinx_markdown_builder not installed"
 fi
 
-# ── JS deps for docusaurus-plugin-typedoc (runs during docusaurus build) ──
-cd "$REPO_DIR/javascript"
-if [ ! -d node_modules ]; then
-  echo "[javascript] Installing JS deps for TypeDoc..."
-  npm install --ignore-scripts --no-audit --no-fund --include=dev 2>&1 | tail -1
-fi
-
 echo "--- API docs generation complete ---"
