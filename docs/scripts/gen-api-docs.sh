@@ -59,8 +59,13 @@ if [ -f "$TYPEDOC" ]; then
   JS_OUT="$DOCS_DIR/docs/javascript-api/reference"
   mkdir -p "$JS_OUT"
 
-  echo "[javascript] Running typedoc..."
+  echo "[javascript] Installing JS deps for typedoc..."
   cd "$REPO_DIR/javascript"
+  if [ ! -d node_modules ]; then
+    npm install --ignore-scripts --no-audit --no-fund --include=dev 2>&1 | tail -2
+  fi
+
+  echo "[javascript] Running typedoc..."
   rm -rf "$JS_OUT"
   "$TYPEDOC" \
     --plugin typedoc-plugin-markdown \
