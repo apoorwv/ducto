@@ -1,0 +1,50 @@
+---
+sidebar_position: 1
+---
+
+# Python API
+
+ducto for Python is published as the [`ducto`](https://pypi.org/project/ducto/) package on PyPI. Requires Python 3.11+.
+
+## Installation
+
+```bash
+pip install ducto
+
+# With store backends
+pip install "ducto[supabase]"
+pip install "ducto[postgres]"
+pip install "ducto[test]"     # dev + testing
+```
+
+## Core Classes
+
+| Class | Description |
+|-------|-------------|
+| [`PricingEngine`](/docs/python-api/pricing-engine) | Pure calculation layer — evaluates expressions against usage metrics |
+| [`CreditManager`](/docs/python-api/credit-manager) | Orchestrates calculate → reserve → deduct lifecycle |
+| [`MemoryStore`](/docs/python-api/stores) | In-memory store for testing |
+| [`HttpxSupabaseStore`](/docs/python-api/stores) | Supabase-backed store (fetch-based) |
+| [`PostgresStore`](/docs/python-api/stores) | Direct PostgreSQL store |
+| [`UsageMetrics`](/docs/python-api/pricing-engine#usagemetrics) | Data class for usage dimensions |
+| [`CostBreakdown`](/docs/python-api/pricing-engine#costbreakdown) | Structured calculation result |
+
+## Quick Example
+
+```python
+from ducto import CreditManager, UsageMetrics
+from ducto.interface.supabase import HttpxSupabaseStore
+
+store = HttpxSupabaseStore(url="https://project.supabase.co", key="service_role_key")
+manager = CreditManager(store=store)
+manager.load_pricing_from_store()
+
+manager.add_credits("user_abc", 1000)
+
+result = manager.deduct(
+    user_id="user_abc",
+    metrics=UsageMetrics(model="gpt-4", input_tokens=500, output_tokens=200),
+    idempotency_key="tx_001",
+)
+print(result.balance_after)  # remaining credits
+```

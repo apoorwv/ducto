@@ -1,0 +1,53 @@
+---
+sidebar_position: 2
+---
+
+# JavaScript API
+
+ducto for TypeScript/JavaScript is published as [`@apoorwv/ducto`](https://www.npmjs.com/package/@apoorwv/ducto) on npm. Requires Node.js 18+.
+
+## Installation
+
+```bash
+npm install @apoorwv/ducto
+
+# PostgreSQL store (optional)
+npm install pg
+
+# YAML pricing loading (optional)
+npm install js-yaml
+```
+
+## Core Classes
+
+| Class | Description |
+|-------|-------------|
+| [`PricingEngine`](/docs/javascript-api/pricing-engine) | Pure calculation layer |
+| [`CreditManager`](/docs/javascript-api/credit-manager) | Orchestrates credit lifecycle |
+| [`MemoryStore`](/docs/javascript-api/stores) | In-memory store for testing |
+| [`HttpxSupabaseStore`](/docs/javascript-api/stores) | Supabase-backed store (native `fetch`) |
+| [`PostgresStore`](/docs/javascript-api/stores) | Direct PostgreSQL via `pg` |
+| `UsageMetrics` | Input interface for calculation |
+| `CostBreakdown` | Structured calculation result |
+
+## Quick Example
+
+```typescript
+import { CreditManager, MemoryStore } from "@apoorwv/ducto";
+
+const store = new MemoryStore();
+const manager = new CreditManager(store);
+
+manager.publishPricingFromDict({
+  version: 1,
+  models: { "gpt-4": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)" },
+});
+
+await manager.addCredits("user_abc", 1000);
+const result = await manager.deduct(
+  "user_abc",
+  { model: "gpt-4", inputTokens: 500, outputTokens: 200 },
+  "idempotency-key-123",
+);
+console.log(`Deducted ${Math.abs(result.amount)} credits`);
+```

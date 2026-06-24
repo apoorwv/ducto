@@ -1,0 +1,73 @@
+# Store Adapters — Python
+
+Store adapters implement the `CreditStore` ABC (8 methods) for different backends.
+
+## MemoryStore
+
+In-memory store. Data lost on restart. Perfect for testing.
+
+```python
+from ducto.interface.memory import MemoryStore
+
+store = MemoryStore()
+manager = CreditManager(store=store)
+```
+
+No dependencies beyond `ducto`.
+
+## HttpxSupabaseStore
+
+Production store backed by Supabase. Uses HTTPX for HTTP requests (no Supabase SDK).
+
+```python
+from ducto.interface.supabase import HttpxSupabaseStore
+
+store = HttpxSupabaseStore(
+    url="https://your-project.supabase.co",
+    key="service_role_key",  # service_role, not anon key
+)
+```
+
+Requires `pip install ducto[supabase]` (installs `httpx`).
+
+### `run_migrations(database_url: str) -> MigrationResult`
+
+Run SQL migrations to create required tables.
+
+```python
+from ducto.interface.supabase import run_migrations
+
+result = run_migrations("postgresql://user:pass@host:5432/db")
+assert result.success, result.errors
+```
+
+## PostgresStore
+
+Direct PostgreSQL connection. Uses `psycopg` or `psycopg2`.
+
+```python
+from ducto.interface.postgres import PostgresStore
+
+store = PostgresStore("postgresql://user:pass@host:5432/db")
+```
+
+Requires `pip install ducto[postgres]`.
+
+## Custom Adapter
+
+Implement `ducto.interface.base.CreditStore`:
+
+```python
+from ducto.interface.base import CreditStore
+from ducto.interface.models import ReserveResult, DeductionResult, BalanceResult, AddCreditsResult
+
+class MyStore(CreditStore):
+    async def get_balance(self, user_id: str) -> BalanceResult: ...
+    async def add_credits(self, user_id: str, amount: int, **kwargs) -> AddCreditsResult: ...
+    async def reserve_credits(self, user_id: str, amount: float, **kwargs) -> ReserveResult: ...
+    async def deduct_credits(self, user_id: str, reservation_id: str, amount: float) -> DeductionResult: ...
+    async def expire_reservations(self) -> int: ...
+    # ... 3 more required methods
+```
+
+The ABC has 8 methods total. See `ducto.interface.base` for the full signature.

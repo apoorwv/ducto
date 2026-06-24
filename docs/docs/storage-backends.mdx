@@ -1,0 +1,51 @@
+# Storage Backends
+
+ducto abstracts storage behind the `CreditStore` interface. Three built-in implementations plus custom adapters.
+
+## Comparison
+
+| Store | Dependencies | Use Case |
+|-------|-------------|----------|
+| `MemoryStore` | None | Testing, development |
+| `HttpxSupabaseStore` | `httpx` (Python) / native `fetch` (JS) | Production (Supabase) |
+| `PostgresStore` | `psycopg` (Python) / `pg` (JS) | Production (direct PostgreSQL) |
+
+## CreditStore Interface
+
+The `CreditStore` ABC/interface defines 8 methods:
+
+| Method | Description |
+|--------|-------------|
+| `get_balance(user_id)` | Get current balance |
+| `add_credits(user_id, amount, ...)` | Add credits to balance |
+| `reserve_credits(user_id, amount, ...)` | Lock credits with reservation |
+| `deduct_credits(user_id, reservation_id, amount)` | Atomically deduct reserved credits |
+| `expire_reservations()` | Expire stale reservations |
+| `get_pricing_config()` | Fetch active pricing config |
+| `set_pricing_config(config, label?)` | Set active pricing config |
+| `close()` | Cleanup connections |
+
+## SQL Migrations
+
+Three bundled SQL files create the required schema:
+
+| File | Creates |
+|------|---------|
+| `001_credit_tables.sql` | `user_credits`, `credit_transactions`, `credit_reservations` tables, RLS policies, signup bonus trigger |
+| `002_credit_rpcs.sql` | `credits_add`, `reserve_credits`, `deduct_credits`, `get_credits_balance` RPCs (SECURITY DEFINER) |
+| `003_pricing_config.sql` | `credit_pricing_config` table, `get_active_pricing_config`, `set_active_pricing_config` RPCs |
+
+All DDL is idempotent (`IF NOT EXISTS` / `CREATE OR REPLACE`).
+
+Run via CLI:
+
+```bash
+ducto migrate "postgresql://user:pass@host:5432/db"
+```
+
+Or from code:
+
+```python
+from ducto.interface.supabase import run_migrations
+result = run_migrations("postgresql://user:pass@host:5432/db")
+```

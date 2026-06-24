@@ -1,0 +1,51 @@
+# Store Adapters — JavaScript
+
+## MemoryStore
+
+In-memory, data lost on restart. Perfect for testing and development.
+
+```typescript
+import { MemoryStore } from "@apoorwv/ducto";
+
+const store = new MemoryStore();
+```
+
+## HttpxSupabaseStore
+
+Supabase-backed store using native `fetch` (Node 18+). No HTTP dependencies.
+
+```typescript
+import { HttpxSupabaseStore } from "@apoorwv/ducto";
+
+const store = new HttpxSupabaseStore(
+  "https://your-project.supabase.co",
+  "service_role_key", // service_role, not anon key
+);
+```
+
+## PostgresStore
+
+Direct PostgreSQL store. Requires `pg` package.
+
+```typescript
+import { PostgresStore } from "@apoorwv/ducto";
+
+const store = new PostgresStore("postgresql://user:pass@host:5432/db");
+```
+
+## Custom Adapter
+
+Implement the `CreditStore` interface:
+
+```typescript
+import type { CreditStore, ReserveResult, DeductionResult, BalanceResult, AddCreditsResult } from "@apoorwv/ducto";
+
+class MyStore implements CreditStore {
+  async getBalance(userId: string): Promise<BalanceResult> { ... }
+  async addCredits(userId: string, amount: number, ...): Promise<AddCreditsResult> { ... }
+  async reserveCredits(userId: string, amount: number, ...): Promise<ReserveResult> { ... }
+  async deductCredits(userId: string, reservationId: string, amount: number): Promise<DeductionResult> { ... }
+  async expireReservations(): Promise<number> { ... }
+  // ... 3 more methods
+}
+```

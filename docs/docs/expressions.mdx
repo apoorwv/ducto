@@ -1,0 +1,73 @@
+# Expression Reference
+
+ducto uses a safe expression language for pricing formulas. The same syntax works identically in Python and JavaScript.
+
+## Arithmetic
+
+| Operator | Example | Description |
+|----------|---------|-------------|
+| `+` | `input_tokens * 0.01 + output_tokens * 0.03` | Addition |
+| `-` | `-cache_read_tokens * 0.001` | Subtraction / negation |
+| `*` | `input_tokens * 0.01` | Multiplication |
+| `/` | `output_tokens * (0.03 / 1000)` | Division |
+| `//` | `input_tokens // 1000` | Floor division |
+| `%` | `input_tokens % 1000` | Modulo |
+| `**` | `input_tokens ** 2` | Exponentiation |
+
+## Comparisons
+
+| Operator | Example |
+|----------|---------|
+| `==` | `output_tokens == 0` |
+| `!=` | `output_tokens != 0` |
+| `<` | `output_tokens < 1000` |
+| `<=` | `output_tokens <= 1000` |
+| `>` | `output_tokens > 1000` |
+| `>=` | `output_tokens >= 1000` |
+| `in` | `"gpt-4" in model` |
+| `not in` | `"batch" not in job_type` |
+
+## Boolean
+
+| Operator | Example |
+|----------|---------|
+| `and` | `tool_calls > 0 and tool_calls <= 10` |
+| `or` | `tool_calls == 0 or cache_read_tokens > 0` |
+
+## Ternary
+
+Python-style conditional expression:
+
+```
+output_tokens * 0.5 if output_tokens > 1000 else output_tokens * 0.3
+```
+
+## Functions
+
+| Function | Description |
+|----------|-------------|
+| `ceil(x)` | Round up to nearest integer |
+| `floor(x)` | Round down to nearest integer |
+| `min(a, b)` | Smaller of two values |
+| `max(a, b)` | Larger of two values |
+| `round(x)` | Round to nearest integer |
+
+## Available Variables
+
+| Variable | Source Field (Python) | Source Field (JS) |
+|----------|----------------------|-------------------|
+| `input_tokens` | `UsageMetrics.input_tokens` | `inputTokens` |
+| `output_tokens` | `UsageMetrics.output_tokens` | `outputTokens` |
+| `cache_read_tokens` | `UsageMetrics.cache_read_tokens` | `cacheReadTokens` |
+| `cache_write_tokens` | `UsageMetrics.cache_write_tokens` | `cacheWriteTokens` |
+| `tool_calls` | `len(UsageMetrics.tool_calls)` | `toolCalls.length` |
+| `search_queries` | `UsageMetrics.search_queries` | `searchQueries` |
+| `search_results` | `UsageMetrics.search_results` | `searchResults` |
+| `web_search_calls` | `UsageMetrics.web_search_calls` | `webSearchCalls` |
+| `code_exec_calls` | `UsageMetrics.code_exec_calls` | `codeExecCalls` |
+
+## Safety
+
+- Python: AST-based validator with strict node allowlist. No `eval()`, no `exec()`, no attribute access, no imports.
+- JavaScript: Recursive descent parser with strict allowlist. No `eval()`, no `Function()` constructor.
+- All expressions validated at config load time. Invalid configs never reach the engine.

@@ -1,0 +1,66 @@
+# CreditManager
+
+The `CreditManager` orchestrates the full credit lifecycle: calculate cost, reserve credits, deduct from balance. It wraps a `PricingEngine` and a `CreditStore`.
+
+## Constructor
+
+```python
+from ducto import CreditManager
+from ducto.interface.memory import MemoryStore
+
+store = MemoryStore()
+manager = CreditManager(store=store)
+# Pricing engine loaded lazily — must call load_pricing_from_store() or publish_pricing_from_dict()
+```
+
+## Pricing
+
+### `load_pricing_from_store() -> None`
+
+Fetch the active pricing config from the database store and initialize the internal `PricingEngine`. Call after connecting to a store that has pricing configured.
+
+### `publish_pricing_from_dict(data: dict) -> None`
+
+Load pricing from a dict (no database needed). Useful for testing or stateless modes.
+
+### `publish_pricing(config: PricingConfig, label: str | None = None) -> None`
+
+Load pricing from a `PricingConfig` object directly.
+
+## Balance Operations
+
+### `add_credits(user_id: str, amount: int, type: str = "admin_adjustment", metadata: dict | None = None) -> AddCreditsResult`
+
+Add credits to a user's balance.
+
+### `get_balance(user_id: str) -> BalanceResult`
+
+Get the current balance for a user.
+
+### `reserve_credits(user_id: str, amount: float, op_type: str = "deduct", metadata: dict | None = None, min_balance: int | None = None) -> ReserveResult`
+
+Reserve credits before deduction. Reservations auto-expire after 10 minutes.
+
+### `deduct(user_id: str, metrics: UsageMetrics, idempotency_key: str, metadata: dict | None = None) -> DeductionResult`
+
+Full reserve-then-deduct lifecycle. Calculates cost from metrics, reserves credits, then deducts. Returns `DeductionResult` with `amount`, `balance_before`, `balance_after`, and breakdown.
+
+### `deduct_fixed(user_id: str, job_name: str, idempotency_key: str, metadata: dict | None = None) -> DeductionResult`
+
+Deduct a fixed cost (configured in pricing config's `fixed` section).
+
+## Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `pricing_engine` | `PricingEngine` `|` `None` | The internal engine (None until pricing loaded) |
+
+## Credit Lifecycle
+
+The reserve-then-deduct pattern prevents double-charging:
+
+1. **Calculate** — `PricingEngine.calculate(UsageMetrics)` → `CostBreakdown`
+2. **Reserve** — `store.reserve_credits(user_id, amount)` locks the row; expires in 10 min
+3. **Deduct** — `store.deduct_credits(user_id, reservation_id, amount)` — idempotent, atomic
+
+If step 3 fails, the reservation auto-expires and credits are returned to the user.

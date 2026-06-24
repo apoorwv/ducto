@@ -1,0 +1,117 @@
+# Pricing Configuration
+
+The pricing config is a JSON object stored in `credit_pricing_config` table (via `set_active_pricing_config` RPC) or loaded from a dict.
+
+## Schema
+
+```json
+{
+  "version": 1,
+  "models": {
+    "gpt-4": "input_tokens * 0.01 + output_tokens * 0.03",
+    "_default": "input_tokens * 0.001 + output_tokens * 0.003"
+  },
+  "tools": {
+    "_default": "tool_calls * 5 / 1000",
+    "code_exec": "tool_calls * 10 / 1000"
+  },
+  "search": {
+    "costs": "search_queries * 0.5 + search_results * 0.05"
+  },
+  "cache": {
+    "discount": "-cache_read_tokens * 0.0045"
+  },
+  "fixed": {
+    "batch_train": 100,
+    "daily_report": 10
+  },
+  "min_balance": 5
+}
+```
+
+## Sections
+
+### `version` (required)
+
+Currently `1`. Used for forward compatibility.
+
+### `models` (required)
+
+Per-model pricing expressions. Must be a non-empty dict.
+
+- Keys are model names (e.g., `gpt-4`, `claude-3-opus`)
+- `_default` is used when no specific model matches UsageMetrics
+- Each value is an expression string
+
+### `tools` (optional)
+
+Per-tool pricing overrides.
+
+- `_default` applies to tool calls not individually configured
+- Tools with explicit entries evaluated separately
+- Remaining calls use `_default`
+- No double-counting: a tool call is only charged once
+
+### `search` (optional)
+
+Search/RAG query pricing.
+
+- `costs` expression for search-related operations
+
+### `cache` (optional)
+
+Cache read discounts.
+
+- `discount` is typically negative (savings/rebate applied to total)
+
+### `fixed` (optional)
+
+Fixed-cost jobs.
+
+- Keys are job names (matched against `UsageMetrics.fixed_job`)
+- Values are non-negative integers
+
+### `min_balance` (optional)
+
+Minimum balance floor. Default varies by implementation.
+
+## Loading from File
+
+Parse a YAML or JSON file and pass to the pricing API:
+
+```python
+# Python
+import yaml
+with open("pricing.yaml") as f:
+    data = yaml.safe_load(f)
+engine = PricingEngine.from_dict(data)
+```
+
+```typescript
+// JavaScript
+import { loadPricingFile } from "@apoorwv/ducto";
+const data = await loadPricingFile("./pricing.yaml");
+const engine = PricingEngine.fromDict(data);
+```
+
+## Live Updates
+
+Pricing stored in `credit_pricing_config` table. Update via CLI:
+
+```bash
+ducto pricing set config.json
+```
+
+Or via RPC. No code redeploy needed — `CreditManager.load_pricing_from_store()` fetches the latest.
+
+## Validation
+
+At load time, the engine:
+
+1. Validates version field
+2. Checks `models` is non-empty
+3. Parses and validates all expression strings
+4. Confirms allowed functions only
+5. Rejects unknown sections
+
+Invalid configs are rejected with descriptive errors before they reach the engine.

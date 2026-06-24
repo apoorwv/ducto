@@ -1,0 +1,60 @@
+# CreditManager — JavaScript
+
+Orchestrates the full credit lifecycle: calculate → reserve → deduct.
+
+## Constructor
+
+```typescript
+import { CreditManager, MemoryStore } from "@apoorwv/ducto";
+
+const store = new MemoryStore();
+const manager = new CreditManager(store);
+```
+
+Optionally pass a pre-configured `PricingEngine`:
+
+```typescript
+const engine = PricingEngine.fromDict({...});
+const manager = new CreditManager(store, engine);
+```
+
+## Pricing
+
+### `publishPricingFromDict(data: PricingConfigData): void`
+
+```typescript
+manager.publishPricingFromDict({
+  version: 1,
+  models: { "_default": "input_tokens * (0.001 / 1000)" },
+});
+```
+
+### `loadPricingFromStore(): Promise<void>`
+
+Fetch active pricing from the database store.
+
+### `publishPricing(config: PricingConfig, label?: string): void`
+
+Load from a `PricingConfig` object.
+
+## Balance Operations
+
+### `addCredits(userId: string, amount: number, type?: string, metadata?: Record<string, unknown>): Promise<AddCreditsResult>`
+
+### `getBalance(userId: string): Promise<BalanceResult>`
+
+### `reserveCredits(userId: string, amount: number, opType?: string, metadata?: Record<string, unknown>, minBalance?: number): Promise<ReserveResult>`
+
+### `deduct(userId: string, metrics: UsageMetricsLike, idempotencyKey: string, metadata?: Record<string, unknown>): Promise<DeductionResult>`
+
+Full reserve-then-deduct lifecycle. Returns deduction result with `amount`, `balanceBefore`, `balanceAfter`.
+
+### `deductFixed(userId: string, jobName: string, idempotencyKey: string, metadata?: Record<string, unknown>): Promise<DeductionResult>`
+
+Deduct a fixed cost.
+
+## Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `pricingEngine` | `PricingEngine \| null` | The internal engine |
