@@ -17,16 +17,8 @@ for nb in "$NOTEBOOKS_DIR"/[0-9]*.ipynb; do
   title="$(python3 -c "import sys; print(sys.argv[1].title())" "$stem")"
   out="$OUT_DIR/$name.mdx"
 
-  # Convert to markdown using nbconvert (try uv-run first, then plain python3)
-  PYTHON_DIR="$REPO_DIR/python"
-  if command -v uv &>/dev/null; then
-    (cd "$PYTHON_DIR" && uv run python -m jupyter nbconvert --to markdown "$nb" --stdout) > "${out}.tmp"
-  elif python3 -m jupyter nbconvert --version &>/dev/null; then
-    python3 -m jupyter nbconvert --to markdown "$nb" --stdout > "${out}.tmp"
-  else
-    echo "  WARN: jupyter/nbconvert not installed, skipping $name" >&2
-    continue
-  fi
+  # Convert to markdown (python3 must have jupyter/nbconvert installed)
+  python3 -m jupyter nbconvert --to markdown "$nb" --stdout > "${out}.tmp"
 
   # Inject Docusaurus frontmatter
   { echo "---"

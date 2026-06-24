@@ -29,10 +29,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Install Python package + Sphinx
+      - name: Install Python package + Sphinx + notebook deps
         run: |
           pip install -e "../python/"
-          pip install sphinx sphinx-markdown-builder
+          pip install sphinx sphinx-markdown-builder jupyter nbconvert
       - uses: actions/setup-node@v6
         with:
           node-version: 24
