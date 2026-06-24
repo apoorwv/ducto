@@ -24,7 +24,7 @@ BEGIN
     -- Prevent concurrent refund on same transaction
     PERFORM pg_advisory_xact_lock(hashtext('refund_' || p_transaction_id));
 
-    IF auth.role() DISTINCT FROM 'service_role' THEN
+    IF auth.role() IS DISTINCT FROM 'service_role' THEN
         RETURN jsonb_build_object('error', 'unauthorized');
     END IF;
 

@@ -55,7 +55,7 @@ AS $$
 DECLARE
   v_team_id UUID;
 BEGIN
-  IF auth.role() DISTINCT FROM 'service_role' THEN
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
     RETURN jsonb_build_object('error', 'unauthorized');
   END IF;
 
@@ -110,7 +110,7 @@ SECURITY DEFINER
 SET search_path = ''
 AS $$
 BEGIN
-  IF auth.role() DISTINCT FROM 'service_role' THEN
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
     RETURN jsonb_build_object('error', 'unauthorized');
   END IF;
 
@@ -179,7 +179,7 @@ BEGIN
     RETURN jsonb_build_object('error', 'invalid_amount', 'amount', p_amount);
   END IF;
 
-  IF auth.role() DISTINCT FROM 'service_role' THEN
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
     RETURN jsonb_build_object('error', 'unauthorized');
   END IF;
 
