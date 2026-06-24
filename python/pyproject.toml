@@ -93,5 +93,10 @@ exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "def __repr__", "raise
 
 [dependency-groups]
 dev = [
+    "ipykernel>=7.3.0",
+    "nbconvert>=7.17.1",
+    "nbformat>=5.10.4",
+    "pglite>=1.0.14",
+    "psycopg2-binary>=2.9.12",
     "pytest-testmon>=2.2.0",
 ]
