@@ -37,10 +37,11 @@ BEGIN
           AND metadata ? 'expires_at'
           AND (metadata->>'expires_at')::timestamptz <= now();
 
-        -- Get current balance
+        -- Get current balance (lock row to prevent concurrent deduction)
         SELECT COALESCE(balance, 0) INTO v_current_balance
         FROM public.user_credits
-        WHERE user_id = v_user.user_id;
+        WHERE user_id = v_user.user_id
+        FOR UPDATE;
 
         -- Cap at current balance
         v_user_expired := LEAST(v_user_expired, v_current_balance);
@@ -71,6 +72,11 @@ BEGIN
     );
 END;
 $$;
+
+-- Index for expiry sweep (finds expired grants without full scan)
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_expires_at
+    ON public.credit_transactions ((metadata ->> 'expires_at'))
+    WHERE metadata ? 'expires_at';
 
 REVOKE EXECUTE ON FUNCTION public.expire_credits FROM anon, authenticated;
 

@@ -173,6 +173,7 @@ DECLARE
   v_balance INTEGER;
   v_spend_cap INTEGER;
   v_total_spent INTEGER;
+  v_tx_id UUID;
 BEGIN
   IF p_amount <= 0 THEN
     RETURN jsonb_build_object('error', 'invalid_amount', 'amount', p_amount);
@@ -196,10 +197,11 @@ BEGIN
     RETURN jsonb_build_object('error', 'spend_cap_exceeded');
   END IF;
 
-  -- Get current team balance
+  -- Get current team balance (locked to prevent concurrent deductions)
   SELECT balance INTO v_balance
   FROM public.credit_teams
-  WHERE id = p_team_id;
+  WHERE id = p_team_id
+  FOR UPDATE;
 
   IF v_balance IS NULL THEN
     RETURN jsonb_build_object('error', 'team_not_found');
@@ -221,12 +223,13 @@ BEGIN
   SET total_spent = total_spent + p_amount
   WHERE team_id = p_team_id AND user_id = p_user_id;
 
-  -- Log transaction in credit_transactions
+  -- Log transaction in credit_transactions with real id
   INSERT INTO public.credit_transactions (user_id, amount, type, metadata)
-  VALUES (p_user_id, -p_amount, 'team_usage', p_metadata || jsonb_build_object('team_id', p_team_id));
+  VALUES (p_user_id, -p_amount, 'team_usage', p_metadata || jsonb_build_object('team_id', p_team_id))
+  RETURNING id INTO v_tx_id;
 
   RETURN jsonb_build_object(
-    'transaction_id', gen_random_uuid(),
+    'transaction_id', v_tx_id,
     'team_id', p_team_id,
     'user_id', p_user_id,
     'amount', -p_amount,

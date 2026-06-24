@@ -103,5 +103,6 @@ REVOKE EXECUTE ON FUNCTION public.daily_spend FROM anon, authenticated;
 
 CREATE INDEX IF NOT EXISTS idx_credit_transactions_created_at ON public.credit_transactions (created_at);
 CREATE INDEX IF NOT EXISTS idx_credit_transactions_user_id_created_at ON public.credit_transactions (user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_credit_transactions_type_created ON public.credit_transactions (type, created_at DESC);
 
 NOTIFY pgrst, 'reload schema';
