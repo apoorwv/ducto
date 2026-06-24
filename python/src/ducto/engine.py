@@ -8,7 +8,7 @@ then calculates credit costs from ``UsageMetrics``.
 from ducto.breakdown import CostBreakdown
 from ducto.config import PricingConfig, load_config_from_dict
 from ducto.expr import evaluate_expression
-from ducto.interface.models import PricingConfigData
+from ducto.interface.models import PricingConfigData, PricingConfigV2
 from ducto.metrics import UsageMetrics
 
 
@@ -34,7 +34,7 @@ class PricingEngine:
         print(result.total)  # 35.0
     """
 
-    def __init__(self, config: PricingConfig) -> None:
+    def __init__(self, config: PricingConfig | PricingConfigV2) -> None:
         self._config = config
 
     @classmethod
@@ -117,10 +117,10 @@ class PricingEngine:
             version=self._config.version,
             models=dict(self._config.models),
             tools=dict(self._config.tools),
-            search=dict(self._config.search) if self._config.search else None,
-            cache=dict(self._config.cache) if self._config.cache else None,
+            search=dict(self._config.search),
+            cache=dict(self._config.cache),
             min_balance=self._config.min_balance,
-            fixed=dict(self._config.fixed) if self._config.fixed else None,
+            fixed=dict(self._config.fixed),
         )
 
     @property

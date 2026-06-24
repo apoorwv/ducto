@@ -73,7 +73,7 @@ class PricingConfig(BaseModel):
         return self
 
 
-def load_config_from_dict(data: dict) -> PricingConfig:
+def load_config_from_dict(data: dict) -> PricingConfig | PricingConfigV2:
     """Load and validate a pricing config from a dictionary.
 
     Args:

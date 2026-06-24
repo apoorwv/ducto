@@ -192,16 +192,9 @@ def _fix_in_operator(tree: ast.AST) -> ast.AST:
 
 
 class _NotPrecedenceTransformer(ast.NodeTransformer):
-    """Fix Python 'not' precedence: ensure not applies to whole comparison.
+    """Fix Python 'not' precedence: ensure not applies to whole comparison."""
 
-    When Python parses an expression like 'not x > 10' without parentheses,
-    'not' binds to x only (not has lower precedence than comparisons in Python
-    but we want it to apply to the whole comparison, matching user expectation).
-    This transformer detects when a Compare's left operand is 'not X' and
-    restructures to 'not (X op Y)'.
-    """
-
-    def visit_Compare(self, node: ast.Compare) -> ast.Compare:
+    def visit_Compare(self, node: ast.Compare) -> ast.AST:
         self.generic_visit(node)
         if isinstance(node.left, ast.UnaryOp) and isinstance(node.left.op, ast.Not):
             lineno = getattr(node, "lineno", 0)

@@ -493,7 +493,7 @@ class MemoryStore(CreditStore):
         """Top users by spend in a time window."""
         rows = self.spend_by_user(start, end)
         rows.sort(key=lambda r: r.total_spend, reverse=True)
-        return rows[:limit]
+        return [TopUserRow(user_id=r.user_id, total_spend=r.total_spend) for r in rows[:limit]]
 
     def daily_spend(self, start: datetime, end: datetime) -> list[DailySpendRow]:
         """Daily spend aggregation in a time window."""

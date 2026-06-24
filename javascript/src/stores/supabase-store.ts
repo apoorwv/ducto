@@ -80,7 +80,7 @@ export class HttpxSupabaseStore implements CreditStore {
     const data = await resp.json();
     if (data === null || data === undefined) return [];
     if (!Array.isArray(data)) return [data];
-    return data.filter((r: unknown) => r != null);
+    return data.filter((r: unknown): r is Record<string, unknown> => r != null);
   }
 
   async setup(_databaseUrl?: string | null): Promise<SetupResult> {

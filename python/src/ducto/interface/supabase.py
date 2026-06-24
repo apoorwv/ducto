@@ -58,6 +58,24 @@ def run_migrations(database_url: str) -> SetupResult:
     conn = psycopg2.connect(database_url)
     try:
         with conn.cursor() as cur:
+            # Bootstrap auth.role() for standalone PG runs (no-op in Supabase)
+            cur.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_proc p
+                        JOIN pg_namespace n ON n.oid = p.pronamespace
+                        WHERE n.nspname = 'auth' AND p.proname = 'role'
+                    ) THEN
+                        CREATE SCHEMA IF NOT EXISTS auth;
+                        CREATE FUNCTION auth.role() RETURNS text
+                        LANGUAGE SQL IMMUTABLE AS $$ SELECT 'service_role'::text $$;
+                    END IF;
+                END
+                $$;
+            """)
+            conn.commit()
+
             for sql_file in _get_sql_files():
                 sql = sql_file.read_text()
                 cur.execute(sql)

@@ -39,11 +39,11 @@ class PricingConfigData(BaseModel):
 
     version: int
     models: dict[str, str]
-    tools: dict[str, str] | None = None
-    search: dict[str, str] | None = None
-    cache: dict[str, str] | None = None
-    fixed: dict[str, int] | None = None
-    min_balance: int | None = None
+    tools: dict[str, str] = Field(default_factory=lambda: {"_default": "tool_calls * 0"})
+    search: dict[str, str] = Field(default_factory=dict)
+    cache: dict[str, str] = Field(default_factory=dict)
+    fixed: dict[str, int] = Field(default_factory=dict)
+    min_balance: int = 5
 
 
 # ── Runtime results ───────────────────────────────────────────────────
@@ -228,7 +228,7 @@ class CapCheckResult(BaseModel):
 
     capped: bool = False
     current_spend: int = 0
-    cap_limit: int = Field(default=0, alias="limit")
+    cap_limit: int = 0
     action: str | None = None
     model: str | None = None
 
