@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ducto.interface.base import CreditStore
+from ducto.interface.base import CreditStore, StoreError
 from ducto.interface.models import (
     AddCreditsResult,
     AddTeamMemberResult,
@@ -332,6 +332,8 @@ class MemoryStore(CreditStore):
         return None
 
     def activate_pricing(self, version: int) -> str:
+        if not any(h["version"] == version for h in self._pricing_history):
+            raise StoreError(f"Version {version} not found")
         activated_id = ""
         for h in self._pricing_history:
             h["active"] = False

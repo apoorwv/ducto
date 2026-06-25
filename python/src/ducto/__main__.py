@@ -126,8 +126,12 @@ def _pricing_validate(args: list[str]) -> None:
     from ducto.interface.models import PricingConfigData
 
     data = _load_pricing_file(args[0])
-    PricingConfigData.model_validate(data)
-    PricingConfig.model_validate(data)
+    try:
+        PricingConfigData.model_validate(data)
+        PricingConfig.model_validate(data)
+    except Exception as exc:
+        print(f"Validation failed: {exc}", file=sys.stderr)
+        sys.exit(1)
     print("Pricing config is valid.")
 
 
