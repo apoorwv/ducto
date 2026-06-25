@@ -42,6 +42,88 @@ def test_set_pricing_replaces_active() -> None:
     assert result.config.models["_default"] == "input_tokens * 2"
 
 
+def test_pricing_history_returns_all_versions() -> None:
+    store = MemoryStore()
+    c1 = PricingConfigData(models={"_default": "input_tokens * 1"})
+    c2 = PricingConfigData(models={"_default": "input_tokens * 2"})
+    c3 = PricingConfigData(models={"_default": "input_tokens * 3"})
+
+    store.set_active_pricing(c1, label="first")
+    store.set_active_pricing(c2, label="second")
+    store.set_active_pricing(c3, label="third")
+
+    history = store.get_pricing_history()
+    assert len(history) == 3
+    assert [h.version for h in history] == [3, 2, 1]  # newest first
+    assert [h.label for h in history] == ["third", "second", "first"]
+    # Only the latest should be active
+    assert [h.active for h in history] == [True, False, False]
+
+
+def test_get_pricing_config_by_version() -> None:
+    store = MemoryStore()
+    c1 = PricingConfigData(models={"_default": "input_tokens * 1"})
+    c2 = PricingConfigData(models={"_default": "input_tokens * 2"})
+    store.set_active_pricing(c1, label="v1")
+    store.set_active_pricing(c2, label="v2")
+
+    v1 = store.get_pricing_config(1)
+    assert v1 is not None
+    assert v1.config.models["_default"] == "input_tokens * 1"
+    assert v1.version == 1
+    assert v1.label == "v1"
+
+    v2 = store.get_pricing_config(2)
+    assert v2 is not None
+    assert v2.config.models["_default"] == "input_tokens * 2"
+    assert v2.version == 2
+
+    # Missing version
+    missing = store.get_pricing_config(99)
+    assert missing is None
+
+
+def test_activate_pricing_rollback() -> None:
+    store = MemoryStore()
+    c1 = PricingConfigData(models={"_default": "input_tokens * 1"})
+    c2 = PricingConfigData(models={"_default": "input_tokens * 2"})
+    c3 = PricingConfigData(models={"_default": "input_tokens * 3"})
+
+    store.set_active_pricing(c1, label="v1")
+    store.set_active_pricing(c2, label="v2")
+    store.set_active_pricing(c3, label="v3")
+
+    # Rollback to v1
+    store.activate_pricing(1)
+    active = store.get_active_pricing()
+    assert active is not None
+    assert active.config.models["_default"] == "input_tokens * 1"
+    assert active.version == 1
+
+    # History should reflect only v1 is active
+    history = store.get_pricing_history()
+    assert history[2].version == 1
+    assert history[2].active is True
+    assert history[0].active is False
+    assert history[1].active is False
+
+
+def test_pricing_history_empty_when_no_config() -> None:
+    store = MemoryStore()
+    assert store.get_pricing_history() == []
+
+
+def test_activate_pricing_does_not_create_new_version() -> None:
+    """Activate switches active version without inserting a new config."""
+    store = MemoryStore()
+    store.set_active_pricing(PricingConfigData(models={"_default": "input_tokens * 1"}), label="v1")
+    store.set_active_pricing(PricingConfigData(models={"_default": "input_tokens * 2"}), label="v2")
+
+    store.activate_pricing(1)
+    # Still only 2 versions
+    assert len(store.get_pricing_history()) == 2
+
+
 def test_publish_pricing_from_dict_invalid_data() -> None:
     manager = CreditManager(store=MemoryStore())
 

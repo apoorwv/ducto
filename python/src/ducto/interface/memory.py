@@ -272,13 +272,18 @@ class MemoryStore(CreditStore):
     # ── Pricing configuration ──────────────────────────────────────────
 
     def get_active_pricing(self) -> PricingConfigResult | None:
-        if self._pricing_config is None:
-            return None
-        return PricingConfigResult(
-            id=str(uuid.uuid4()),
-            config=self._pricing_config,
-            version=self._pricing_version,
-        )
+        for h in reversed(self._pricing_history):
+            if h["active"]:
+                cfg = h.get("config")
+                if cfg is None:
+                    return None
+                return PricingConfigResult(
+                    id=h["id"],
+                    config=PricingConfigData.model_validate(cfg),
+                    version=h["version"],
+                    label=h.get("label"),
+                )
+        return None
 
     def set_active_pricing(
         self,
@@ -288,15 +293,17 @@ class MemoryStore(CreditStore):
         self._pricing_config = config
         self._pricing_version += 1
         self._pricing_label = label
-        # Push to history (deactivate all previous)
+        # Push to history with a snapshot of the config data
         for h in self._pricing_history:
             h["active"] = False
+        record_id = str(uuid.uuid4())
         self._pricing_history.append(
             {
-                "id": str(uuid.uuid4()),
+                "id": record_id,
                 "version": self._pricing_version,
                 "label": label,
                 "active": True,
+                "config": config.model_dump(mode="json"),
                 "created_at": datetime.now().isoformat(),
             }
         )
@@ -305,30 +312,38 @@ class MemoryStore(CreditStore):
         if plans:
             for plan in plans.values():
                 self._plan_definitions[plan.id] = plan
-        return str(uuid.uuid4())
+        return record_id
 
     def get_pricing_history(self) -> list[PricingConfigHistoryItem]:
-        return [PricingConfigHistoryItem.model_validate(h) for h in self._pricing_history]
+        return [PricingConfigHistoryItem.model_validate(h) for h in reversed(self._pricing_history)]
 
     def get_pricing_config(self, version: int) -> PricingConfigResult | None:
         for h in self._pricing_history:
             if h["version"] == version:
-                if self._pricing_config is None:
-                    return None
+                cfg = h.get("config")
+                if cfg is None and self._pricing_config is not None:
+                    cfg = self._pricing_config.model_dump(mode="json")
                 return PricingConfigResult(
                     id=h["id"],
-                    config=self._pricing_config,
+                    config=PricingConfigData.model_validate(cfg),
                     version=version,
                     label=h.get("label"),
                 )
         return None
 
     def activate_pricing(self, version: int) -> str:
+        activated_id = ""
         for h in self._pricing_history:
             h["active"] = False
             if h["version"] == version:
                 h["active"] = True
-        return str(uuid.uuid4())
+                activated_id = h["id"]
+                # Restore the config data from that version
+                cfg_data = h.get("config")
+                if cfg_data:
+                    self._pricing_config = PricingConfigData.model_validate(cfg_data)
+                    self._pricing_version = version
+        return activated_id or str(uuid.uuid4())
 
     # ── Plan management ────────────────────────────────────────────────
 
