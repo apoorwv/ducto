@@ -25,6 +25,7 @@ from ducto.interface.models import (
     DeductionResult,
     GetUserPlanResult,
     PricingConfigData,
+    PricingConfigHistoryItem,
     PricingConfigResult,
     RefundResult,
     ReserveResult,
@@ -291,6 +292,47 @@ class PostgresStore(CreditStore):
 
         result_dict = row[0] if row and isinstance(row[0], dict) else {}
         return str(result_dict.get("id", ""))
+
+    def get_pricing_history(self) -> list[PricingConfigHistoryItem]:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("get_pricing_configs")
+                rows = cur.fetchall()
+            conn.commit()
+        finally:
+            conn.close()
+
+        return [PricingConfigHistoryItem.model_validate(r[0]) for r in rows]
+
+    def get_pricing_config(self, version: int) -> PricingConfigResult | None:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("get_pricing_config", [version])
+                row = cur.fetchone()
+            conn.commit()
+        finally:
+            conn.close()
+
+        if row is None:
+            return None
+        return PricingConfigResult.model_validate(row[0])
+
+    def activate_pricing(self, version: int) -> str:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.callproc("activate_pricing_config", [version])
+                row = cur.fetchone()
+            conn.commit()
+        finally:
+            conn.close()
+
+        if row is None:
+            msg = f"Version {version} not found"
+            raise StoreError(msg)
+        return str(row[0].get("id", "")) if isinstance(row[0], dict) else str(row[0])
 
     # ── Plan management ────────────────────────────────────────────────
 

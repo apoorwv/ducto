@@ -93,9 +93,10 @@ Creates all tables (`user_credits`, `credit_transactions`, `credit_reservations`
 `credit_plans`, `credit_usage_window`, `credit_teams`, `credit_team_members`,
 `credit_spend_caps`, `credit_pricing_config`) and 20+ RPCs — all idempotent.
 
-### 2. Seed pricing
+### 2. Pricing version management
 
 ```bash
+# Apply new pricing (creates v1)
 ducto pricing set - <<'JSON'
 {
   "version": 1,
@@ -106,7 +107,37 @@ ducto pricing set - <<'JSON'
   }
 }
 JSON
+
+# Apply with a label
+ducto pricing set pricing.yaml --label "deploy-42"
+
+# List all versions  (* = active)
+ducto pricing list
+
+# Switch active pricing
+ducto pricing activate 1
+
+# Diff two versions
+ducto pricing diff 1 2
+
+# Export a version as JSON
+ducto pricing export 2
+
+# Validate without applying
+ducto pricing validate pricing.yaml
 ```
+
+Each `pricing set` creates a new immutable version. Roll back with `pricing activate <version>`.
+
+| Command | Description |
+|---------|-------------|
+| `pricing set <file> [--label <msg>]` | Apply config (always creates new version) |
+| `pricing get` | Show active config |
+| `pricing list` | List all versions |
+| `pricing activate <version>` | Switch to any version |
+| `pricing validate <file>` | Dry-run validate |
+| `pricing diff <v1> <v2>` | Unified diff between versions |
+| `pricing export <version>` | Dump version as JSON |
 
 ### 3. Deduct credits
 

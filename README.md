@@ -68,6 +68,8 @@ pip install ducto           # Python
 npm install @apoorwv/ducto  # TypeScript
 ```
 
+> **CLI availability:** The `ducto` CLI commands below are Python-only (`pip install ducto`). The JavaScript SDK provides equivalent library APIs without a CLI.
+
 ### 1. Migrate database
 
 ```bash
@@ -76,10 +78,31 @@ ducto migrate "postgresql://user:pass@host:5432/db"
 
 Creates 10 tables/RPC groups for credits, pricing, plans, refunds, expiry, analytics, teams, and spend caps.
 
-### 2. Seed pricing
+### 2. Pricing version management
+
+Each `ducto pricing set` creates a new immutable version. Roll back anytime with `pricing activate`.
 
 ```bash
+# Apply new pricing (creates v1)
 ducto pricing set pricing.json
+
+# Apply with a label
+ducto pricing set pricing.json --label "deploy-42"
+
+# List all versions  (* = active)
+ducto pricing list
+
+# Switch active pricing
+ducto pricing activate 1
+
+# Diff two versions
+ducto pricing diff 1 2
+
+# Export a version as JSON
+ducto pricing export 2
+
+# Validate without applying
+ducto pricing validate pricing.json
 ```
 
 ### 3. Deduct credits
