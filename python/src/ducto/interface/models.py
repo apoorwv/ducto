@@ -100,6 +100,17 @@ class PricingConfigResult(BaseModel):
     id: str
     config: PricingConfigData
     version: int = 1
+    label: str | None = None
+
+
+class PricingConfigHistoryItem(BaseModel):
+    """Lightweight summary for pricing version listing."""
+
+    id: str
+    version: int
+    label: str | None = None
+    active: bool = False
+    created_at: str = ""
 
 
 class SetupResult(BaseModel):

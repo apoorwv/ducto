@@ -25,6 +25,7 @@ from ducto.interface.models import (
     DeductionResult,
     GetUserPlanResult,
     PricingConfigData,
+    PricingConfigHistoryItem,
     PricingConfigResult,
     RefundResult,
     ReserveResult,
@@ -300,6 +301,23 @@ class HttpxSupabaseStore(CreditStore):
             "set_active_pricing_config",
             {"p_config": config.model_dump(mode="json"), "p_label": label},
         )
+        return str(row.get("id", ""))
+
+    def get_pricing_history(self) -> list[PricingConfigHistoryItem]:
+        rows = self._rpc_list("get_pricing_configs", {})
+        return [PricingConfigHistoryItem.model_validate(r) for r in rows]
+
+    def get_pricing_config(self, version: int) -> PricingConfigResult | None:
+        row = self._rpc("get_pricing_config", {"p_version": version})
+        if not row:
+            return None
+        return PricingConfigResult.model_validate(row)
+
+    def activate_pricing(self, version: int) -> str:
+        row = self._rpc("activate_pricing_config", {"p_version": version})
+        err = row.get("error")
+        if err:
+            raise StoreError(f"Cannot activate pricing: {err}")
         return str(row.get("id", ""))
 
     # ── Plan management ────────────────────────────────────────────────

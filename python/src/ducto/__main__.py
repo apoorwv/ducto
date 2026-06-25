@@ -1,7 +1,8 @@
-"""ducto CLI — migrate, pricing get/set."""
+"""ducto CLI — migrate, pricing management."""
 
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from ducto.interface.models import PricingConfigResult
     from ducto.interface.supabase import HttpxSupabaseStore
 
 try:
@@ -22,11 +24,8 @@ except ImportError:
 def _load_env() -> None:
     """Load .env from CWD. Won't override env vars already set."""
     env_path = Path.cwd() / ".env"
-    if env_path.is_file():
-        if load_dotenv:
-            load_dotenv(env_path, override=False)
-    else:
-        pass
+    if env_path.is_file() and load_dotenv:
+        load_dotenv(env_path, override=False)
 
 
 _RETRY_DELAY = 2
@@ -94,6 +93,8 @@ def _migrate(args: list[str]) -> None:
 
 def _load_pricing_file(filepath: str) -> dict[str, Any]:
     """Read a JSON or YAML pricing config file."""
+    if filepath == "-":
+        return json.load(sys.stdin)
     if filepath.endswith((".yaml", ".yml")):
         try:
             import yaml
@@ -115,15 +116,35 @@ def _load_pricing_file(filepath: str) -> dict[str, Any]:
             sys.exit(1)
 
 
-def _pricing_set(args: list[str]) -> None:
+def _pricing_validate(args: list[str]) -> None:
+    """Validate a pricing file without applying it."""
     if not args:
-        print("Usage: ducto pricing set <file.json|file.yaml>", file=sys.stderr)
+        print("Usage: ducto pricing validate <file.json|file.yaml>", file=sys.stderr)
+        sys.exit(1)
+
+    from ducto.config import PricingConfig
+    from ducto.interface.models import PricingConfigData
+
+    data = _load_pricing_file(args[0])
+    PricingConfigData.model_validate(data)
+    PricingConfig.model_validate(data)
+    print("Pricing config is valid.")
+
+
+def _pricing_set(args: list[str]) -> None:
+    """Apply new pricing — always creates a new version."""
+    if not args:
+        print("Usage: ducto pricing set <file.json|file.yaml> [--label <message>]", file=sys.stderr)
         sys.exit(1)
 
     from ducto.interface.models import PricingConfigData
 
-    data = _load_pricing_file(args[0])
+    filepath = args[0]
+    label = None
+    if len(args) > 2 and args[1] == "--label":
+        label = args[2]
 
+    data = _load_pricing_file(filepath)
     config = PricingConfigData.model_validate(data)
 
     store = _store_from_env()
@@ -131,11 +152,7 @@ def _pricing_set(args: list[str]) -> None:
     # Retry: PostgREST schema cache may not be refreshed yet
     for attempt in range(_RETRIES):
         try:
-            existing = store.get_active_pricing()
-            if existing is not None:
-                print(f"Active pricing already exists (id={existing.id}) — skipping.")
-                return
-            store.set_active_pricing(config)
+            store.set_active_pricing(config, label=label)
             print("Pricing config set successfully.")
             return
         except Exception as exc:
@@ -146,7 +163,8 @@ def _pricing_set(args: list[str]) -> None:
             time.sleep(_RETRY_DELAY)
 
 
-def _pricing_get() -> None:
+def _pricing_get(args: list[str]) -> None:
+    """Show active pricing config."""
     store = _store_from_env()
     for attempt in range(_RETRIES):
         try:
@@ -164,19 +182,136 @@ def _pricing_get() -> None:
             time.sleep(_RETRY_DELAY)
 
 
+def _pricing_list(_args: list[str] | None = None) -> None:
+    """List all pricing config versions."""
+    store = _store_from_env()
+    for attempt in range(_RETRIES):
+        try:
+            rows = store.get_pricing_history()
+            if not rows:
+                print("No pricing configs found.", file=sys.stderr)
+                sys.exit(1)
+            for r in rows:
+                marker = "*" if r.active else " "
+                label = f"  {r.label}" if r.label else ""
+                print(f"  {marker} v{r.version}  (id={r.id[:8]}...){label}  {r.created_at[:19]}")
+            return
+        except Exception as exc:
+            if attempt == _RETRIES - 1:
+                print(f"Failed to list pricing: {exc}", file=sys.stderr)
+                sys.exit(1)
+            time.sleep(_RETRY_DELAY)
+
+
+def _pricing_activate(args: list[str]) -> None:
+    """Activate a specific pricing version."""
+    if not args:
+        print("Usage: ducto pricing activate <version>", file=sys.stderr)
+        sys.exit(1)
+
+    store = _store_from_env()
+    version = int(args[0])
+    for attempt in range(_RETRIES):
+        try:
+            store.activate_pricing(version)
+            print(f"Pricing v{version} activated.")
+            return
+        except Exception as exc:
+            if attempt == _RETRIES - 1:
+                print(f"Failed to activate pricing: {exc}", file=sys.stderr)
+                sys.exit(1)
+            time.sleep(_RETRY_DELAY)
+
+
+def _pricing_diff(args: list[str]) -> None:
+    """Show diff between two pricing versions."""
+    if len(args) < 2:
+        print("Usage: ducto pricing diff <version_a> <version_b>", file=sys.stderr)
+        sys.exit(1)
+
+    store = _store_from_env()
+    v1 = int(args[0])
+    v2 = int(args[1])
+
+    a: PricingConfigResult | None = None
+    b: PricingConfigResult | None = None
+    for attempt in range(_RETRIES):
+        try:
+            a = store.get_pricing_config(v1)
+            b = store.get_pricing_config(v2)
+            break
+        except Exception as exc:
+            if attempt == _RETRIES - 1:
+                print(f"Failed to fetch pricing configs: {exc}", file=sys.stderr)
+                sys.exit(1)
+            time.sleep(_RETRY_DELAY)
+
+    if a is None:
+        print(f"Version {v1} not found.", file=sys.stderr)
+        sys.exit(1)
+    if b is None:
+        print(f"Version {v2} not found.", file=sys.stderr)
+        sys.exit(1)
+
+    a_json = json.dumps(a.config.model_dump(mode="json"), indent=2)
+    b_json = json.dumps(b.config.model_dump(mode="json"), indent=2)
+
+    diff = difflib.unified_diff(
+        a_json.splitlines(keepends=True),
+        b_json.splitlines(keepends=True),
+        fromfile=f"v{v1}",
+        tofile=f"v{v2}",
+    )
+    sys.stdout.writelines(diff)
+
+
+def _pricing_export(args: list[str]) -> None:
+    """Export a specific pricing version as JSON."""
+    if not args:
+        print("Usage: ducto pricing export <version>", file=sys.stderr)
+        sys.exit(1)
+
+    store = _store_from_env()
+    version = int(args[0])
+
+    result: PricingConfigResult | None = None
+    for attempt in range(_RETRIES):
+        try:
+            result = store.get_pricing_config(version)
+            break
+        except Exception as exc:
+            if attempt == _RETRIES - 1:
+                print(f"Failed to fetch pricing: {exc}", file=sys.stderr)
+                sys.exit(1)
+            time.sleep(_RETRY_DELAY)
+
+    if result is None:
+        print(f"Version {version} not found.", file=sys.stderr)
+        sys.exit(1)
+
+    print(json.dumps(result.config.model_dump(mode="json", exclude_none=True), indent=2))
+
+
 def _pricing(args: list[str]) -> None:
     if not args:
-        print("Usage: ducto pricing <get|set> ...", file=sys.stderr)
+        print("Usage: ducto pricing <set|get|list|activate|validate|diff|export> [...]", file=sys.stderr)
         sys.exit(1)
 
     sub = args[0]
-    if sub == "set":
-        _pricing_set(args[1:])
-    elif sub == "get":
-        _pricing_get()
-    else:
+    subcommands: dict[str, Callable[[list[str]], None]] = {
+        "set": _pricing_set,
+        "get": _pricing_get,
+        "list": _pricing_list,
+        "activate": _pricing_activate,
+        "validate": _pricing_validate,
+        "diff": _pricing_diff,
+        "export": _pricing_export,
+    }
+    handler = subcommands.get(sub)
+    if handler is None:
         print(f"Unknown pricing subcommand: {sub}", file=sys.stderr)
         sys.exit(1)
+    handler(args[1:])
 
 
 def _usage() -> None:
@@ -207,7 +342,7 @@ _COMMANDS: dict[str, tuple[str, Callable[[list[str]], None]]] = {
         _migrate,
     ),
     "pricing": (
-        "get | set <file> — Manage pricing config (ducto[supabase])",
+        "set|get|list|activate|validate|diff|export — Manage pricing config (ducto[supabase])",
         _pricing,
     ),
 }

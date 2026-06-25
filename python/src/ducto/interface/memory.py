@@ -23,6 +23,7 @@ from ducto.interface.models import (
     GetUserPlanResult,
     PlanDefinition,
     PricingConfigData,
+    PricingConfigHistoryItem,
     PricingConfigResult,
     RefundResult,
     ReserveResult,
@@ -106,6 +107,7 @@ class MemoryStore(CreditStore):
         self._pricing_config: PricingConfigData | None = None
         self._pricing_version: int = 0
         self._pricing_label: str | None = None
+        self._pricing_history: list[dict[str, Any]] = []
         self._plan_definitions: dict[str, PlanDefinition] = {}
         self._user_plan_map: dict[str, str] = {}
         self._usage_windows: list[_UsageWindowRecord] = []
@@ -286,11 +288,46 @@ class MemoryStore(CreditStore):
         self._pricing_config = config
         self._pricing_version += 1
         self._pricing_label = label
-        # Extract plan definitions from v2 config
+        # Push to history (deactivate all previous)
+        for h in self._pricing_history:
+            h["active"] = False
+        self._pricing_history.append(
+            {
+                "id": str(uuid.uuid4()),
+                "version": self._pricing_version,
+                "label": label,
+                "active": True,
+                "created_at": datetime.now().isoformat(),
+            }
+        )
+        # Extract plan definitions from config
         plans = getattr(config, "plans", None)
         if plans:
             for plan in plans.values():
                 self._plan_definitions[plan.id] = plan
+        return str(uuid.uuid4())
+
+    def get_pricing_history(self) -> list[PricingConfigHistoryItem]:
+        return [PricingConfigHistoryItem.model_validate(h) for h in self._pricing_history]
+
+    def get_pricing_config(self, version: int) -> PricingConfigResult | None:
+        for h in self._pricing_history:
+            if h["version"] == version:
+                if self._pricing_config is None:
+                    return None
+                return PricingConfigResult(
+                    id=h["id"],
+                    config=self._pricing_config,
+                    version=version,
+                    label=h.get("label"),
+                )
+        return None
+
+    def activate_pricing(self, version: int) -> str:
+        for h in self._pricing_history:
+            h["active"] = False
+            if h["version"] == version:
+                h["active"] = True
         return str(uuid.uuid4())
 
     # ── Plan management ────────────────────────────────────────────────

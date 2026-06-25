@@ -23,6 +23,7 @@ from ducto.interface.models import (
     DeductionResult,
     GetUserPlanResult,
     PricingConfigData,
+    PricingConfigHistoryItem,
     PricingConfigResult,
     RefundResult,
     ReserveResult,
@@ -136,6 +137,28 @@ class CreditStore(ABC):
 
         Deactivates the previous active config and inserts a new one.
         Returns the new config id.
+        """
+        ...
+
+    @abstractmethod
+    def get_pricing_history(self) -> list[PricingConfigHistoryItem]:
+        """List all pricing config versions (newest first)."""
+        ...
+
+    @abstractmethod
+    def get_pricing_config(self, version: int) -> PricingConfigResult | None:
+        """Fetch a specific pricing config by version number."""
+        ...
+
+    @abstractmethod
+    def activate_pricing(self, version: int) -> str:
+        """Activate a specific pricing version (deactivates all others).
+
+        Args:
+            version: The version number to activate.
+
+        Returns:
+            The activated config id.
         """
         ...
 

@@ -104,5 +104,109 @@ BEGIN
 END;
 $$;
 
+-- get_pricing_configs: List all pricing configs ordered by version.
+CREATE OR REPLACE FUNCTION public.get_pricing_configs()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO ''
+AS $$
+BEGIN
+    IF auth.role() IS DISTINCT FROM 'service_role' THEN
+        RETURN '[]'::JSONB;
+    END IF;
+
+    RETURN (
+        SELECT jsonb_agg(
+            jsonb_build_object(
+                'id', id,
+                'version', version,
+                'label', label,
+                'active', active,
+                'created_at', created_at
+            )
+            ORDER BY version DESC
+        )
+        FROM public.credit_pricing_config
+    );
+END;
+$$;
+
+-- get_pricing_config: Fetch a specific pricing config by version.
+CREATE OR REPLACE FUNCTION public.get_pricing_config(p_version INTEGER)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO ''
+AS $$
+DECLARE
+    v_config JSONB;
+    v_id UUID;
+    v_version INTEGER;
+BEGIN
+    IF auth.role() IS DISTINCT FROM 'service_role' THEN
+        RETURN NULL;
+    END IF;
+
+    SELECT id, config, version INTO v_id, v_config, v_version
+    FROM public.credit_pricing_config
+    WHERE version = p_version
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+        RETURN NULL;
+    END IF;
+
+    RETURN jsonb_build_object(
+        'id', v_id,
+        'config', v_config,
+        'version', v_version
+    );
+END;
+$$;
+
+-- activate_pricing_config: Switch to a specific version and deactivate all others.
+CREATE OR REPLACE FUNCTION public.activate_pricing_config(p_version INTEGER)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO ''
+AS $$
+DECLARE
+    v_target_version INTEGER;
+    v_target_id UUID;
+BEGIN
+    IF auth.role() IS DISTINCT FROM 'service_role' THEN
+        RETURN jsonb_build_object('error', 'unauthorized');
+    END IF;
+
+    -- Verify the target version exists
+    SELECT id INTO v_target_id
+    FROM public.credit_pricing_config
+    WHERE version = p_version;
+
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('error', 'version_not_found');
+    END IF;
+
+    -- Deactivate all configs
+    UPDATE public.credit_pricing_config SET active = false WHERE active = true;
+
+    -- Activate the target version
+    UPDATE public.credit_pricing_config SET active = true
+    WHERE version = p_version
+    RETURNING id INTO v_target_id;
+
+    RETURN jsonb_build_object(
+        'id', v_target_id,
+        'version', p_version,
+        'active', true
+    );
+END;
+$$;
+
 REVOKE EXECUTE ON FUNCTION public.get_active_pricing_config FROM anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.set_active_pricing_config FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.get_pricing_configs FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.get_pricing_config FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.activate_pricing_config FROM anon, authenticated;
