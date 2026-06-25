@@ -218,3 +218,68 @@ class TestRoot:
     def test_unknown_command_exits_with_error(self) -> None:
         with pytest.raises(SystemExit):
             _run("blarg")
+
+
+class TestPricingValidation:
+    """Schema regression tests — validate realistic configs with all features."""
+
+    def test_validate_realistic_config_with_search_plans(self, tmp_path: Path) -> None:
+        """A config with multi-key search, tools, cache, plans, and integer features must pass."""
+        config = {
+            "models": {"_default": "input_tokens * 1", "gpt-4": "input_tokens * 2"},
+            "tools": {"_default": "tool_calls * 5", "code_exec": "tool_calls * 50"},
+            "search": {"costs": "search_queries * 5", "rag": "search_queries * 10"},
+            "cache": {"discount": "clamp(-cache_read_tokens * 0.002, -max(input_tokens), 0)"},
+            "fixed": {"batch": 100, "roadmap_gen": 20000},
+            "min_balance": 5000,
+            "plans": {
+                "free": {
+                    "id": "free",
+                    "name": "Free",
+                    "free_allowance": 5000,
+                    "features": {"max_daily_roadmaps": 1, "max_concurrency": 1},
+                },
+                "pro": {
+                    "id": "pro",
+                    "name": "Pro",
+                    "free_allowance": 50000,
+                    "features": {"max_daily_roadmaps": 10, "max_concurrency": 3},
+                },
+            },
+        }
+        p = tmp_path / "realistic.yaml"
+        import yaml
+
+        p.write_text(yaml.dump(config))
+        _run("pricing", "validate", str(p))
+
+    def test_validate_config_with_features_bool_and_int(self, tmp_path: Path) -> None:
+        """Features dict must accept both booleans and integers."""
+        config = {
+            "models": {"_default": "input_tokens * 1"},
+            "plans": {
+                "tier1": {
+                    "id": "tier1",
+                    "name": "Tier 1",
+                    "features": {"premium": True, "max_items": 100},
+                },
+            },
+        }
+        p = tmp_path / "features.yaml"
+        import yaml
+
+        p.write_text(yaml.dump(config))
+        _run("pricing", "validate", str(p))
+
+    def test_validate_config_with_mixed_search_nested_dict_fails(self, tmp_path: Path) -> None:
+        """search.rag must be a flat string, not a dict with 'costs' key."""
+        config = {
+            "models": {"_default": "input_tokens * 1"},
+            "search": {"costs": "search_queries * 1", "rag": {"costs": "search_queries * 2"}},
+        }
+        p = tmp_path / "bad_search.yaml"
+        import yaml
+
+        p.write_text(yaml.dump(config))
+        with pytest.raises(SystemExit):
+            _run("pricing", "validate", str(p))
