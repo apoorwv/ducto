@@ -6,7 +6,7 @@ raw dicts — validation at the boundary, clarity in the call sites.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -135,7 +135,7 @@ class PlanDefinition(BaseModel):
     name: str
     free_allowance: int = Field(default=0, ge=0)
     rate_overrides: dict[str, str] | None = None
-    features: dict[str, bool] | None = None
+    features: dict[str, Any] | None = None
 
 
 class AllowanceResult(BaseModel):
