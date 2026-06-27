@@ -237,8 +237,8 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
   it("plan allowance covers full cost, skips balance deduct", async () => {
     const store = new PostgresStore(DATABASE_URL!, pg.Pool);
     await pool.query(
-      `INSERT INTO public.credit_plans (id, name, free_allowance, plan_key) VALUES ($1, 'Free', 100, $1)`,
-      [PLAN_UUID],
+      `INSERT INTO public.credit_plans (id, name, free_allowance, plan_key) VALUES ($1, 'Free', 100, $2)`,
+      [PLAN_UUID, PLAN_UUID],
     );
 
     await store.addCredits(PG_USER, 10, "adjustment");
@@ -272,8 +272,8 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
   it("plan allowance partially covers, deducts remainder from balance", async () => {
     const store = new PostgresStore(DATABASE_URL!, pg.Pool);
     await pool.query(
-      `INSERT INTO public.credit_plans (id, name, free_allowance, plan_key) VALUES ($1, 'Starter', 10, $1)`,
-      [PLAN_UUID],
+      `INSERT INTO public.credit_plans (id, name, free_allowance, plan_key) VALUES ($1, 'Starter', 10, $2)`,
+      [PLAN_UUID, PLAN_UUID],
     );
 
     await store.addCredits(PG_USER, 100, "adjustment");

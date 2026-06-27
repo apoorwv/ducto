@@ -10,9 +10,7 @@
 
 ALTER TABLE public.credit_plans ADD COLUMN IF NOT EXISTS plan_key TEXT;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_credit_plans_plan_key
-    ON public.credit_plans (plan_key)
-    WHERE plan_key IS NOT NULL;
+ALTER TABLE public.credit_plans ADD CONSTRAINT uq_credit_plans_plan_key UNIQUE (plan_key);
 
 
 -- ── sync_plans_from_config: upsert plan definitions into credit_plans ─
@@ -40,7 +38,7 @@ BEGIN
                 COALESCE(v_plan_def->'rate_overrides', '{}'::jsonb),
                 COALESCE(v_plan_def->'features', '{}'::jsonb)
             )
-            ON CONFLICT (plan_key) WHERE plan_key IS NOT NULL
+            ON CONFLICT (plan_key)
             DO UPDATE SET
                 name = EXCLUDED.name,
                 free_allowance = EXCLUDED.free_allowance,
