@@ -604,3 +604,35 @@ class TestEventSystem:
         mgr.deduct("user-1", UsageMetrics(input_tokens=10))
         assert len(events) == 1
         assert events[0].type == "credits.cap_warning"
+
+
+class TestPlanFeatures:
+    """Tests for plan management and feature gating."""
+
+    def test_get_user_plan_through_manager(self, manager: CreditManager) -> None:
+        store = manager._store
+        store.set_user_plan("user-1", "pro")
+        result = manager.get_user_plan("user-1")
+        assert result.plan_id == "pro"
+
+    def test_check_feature_through_manager(self, manager: CreditManager) -> None:
+        store = manager._store
+        v2 = PricingConfigData(
+            models={"_default": "1"},
+            plans={
+                "premium": PlanDefinition(
+                    id="premium",
+                    name="Premium",
+                    features={"ai_chat": True, "max_roadmaps": 20},
+                ),
+            },
+        )
+        store.set_active_pricing(v2)
+        store.set_user_plan("user-1", "premium")
+        result = manager.check_feature("user-1", "ai_chat")
+        assert result.has_feature is True
+        assert result.value is True
+        result = manager.check_feature("user-1", "export_pdf")
+        assert result.has_feature is False
+        result = manager.check_feature("nobody", "ai_chat")
+        assert result.has_feature is False

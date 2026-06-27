@@ -146,6 +146,66 @@ describe("MemoryStore", () => {
       expect(result.planId).toBe("plan-free");
       expect(result.planName).toBe("Free Plan");
       expect(result.freeAllowance).toBe(100);
+      expect(result.features).toEqual({});
+    });
+
+    it("getUserPlan returns features from plan definition", async () => {
+      const config: PricingConfigData = {
+        models: { _default: "1" },
+        plans: {
+          premium: {
+            id: "premium",
+            name: "Premium",
+            freeAllowance: 2000,
+            features: { aiChat: true, maxRoadmaps: 20 },
+          },
+        },
+      };
+      await store.setActivePricing(config);
+      await store.setUserPlan("user-1", "premium");
+
+      const result = await store.getUserPlan("user-1");
+      expect(result.planId).toBe("premium");
+      expect(result.features["aiChat"]).toBe(true);
+      expect(result.features["maxRoadmaps"]).toBe(20);
+    });
+
+    it("checkFeature returns correct entitlement", async () => {
+      const config: PricingConfigData = {
+        models: { _default: "1" },
+        plans: {
+          free: { id: "free", name: "Free", freeAllowance: 0, features: {} },
+          premium: {
+            id: "premium",
+            name: "Premium",
+            freeAllowance: 2000,
+            features: { aiChat: true, maxRoadmaps: 20 },
+          },
+        },
+      };
+      await store.setActivePricing(config);
+      await store.setUserPlan("user-premium", "premium");
+      await store.setUserPlan("user-free", "free");
+
+      // Premium user — has features
+      const chat = await store.checkFeature("user-premium", "aiChat");
+      expect(chat.hasFeature).toBe(true);
+      expect(chat.value).toBe(true);
+
+      const roadmaps = await store.checkFeature("user-premium", "maxRoadmaps");
+      expect(roadmaps.value).toBe(20);
+
+      // Missing feature
+      const pdf = await store.checkFeature("user-premium", "exportPdf");
+      expect(pdf.hasFeature).toBe(false);
+
+      // Free user — empty features
+      const freeChat = await store.checkFeature("user-free", "aiChat");
+      expect(freeChat.hasFeature).toBe(false);
+
+      // No plan
+      const nobody = await store.checkFeature("nobody", "aiChat");
+      expect(nobody.hasFeature).toBe(false);
     });
 
     it("checkAllowance returns remaining allowance", async () => {

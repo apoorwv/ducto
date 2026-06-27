@@ -92,7 +92,7 @@ export function loadConfigFromDict(data: Record<string, unknown>): PricingConfig
         name: p.name as string,
         freeAllowance: (p.freeAllowance as number) ?? 0,
         rateOverrides: (p.rateOverrides as Record<string, string>) ?? null,
-        features: (p.features as Record<string, boolean>) ?? null,
+        features: (p.features as Record<string, unknown>) ?? null,
       };
     }
     config.plans = planDefs;

@@ -22,6 +22,7 @@ export type {
   AllowanceResult,
   BalanceResult,
   CapCheckResult,
+  CheckFeatureResult,
   CreateTeamResult,
   CreditMetadata,
   DailySpendRow,

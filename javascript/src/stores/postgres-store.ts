@@ -5,6 +5,7 @@ import type {
   AllowanceResult,
   BalanceResult,
   CapCheckResult,
+  CheckFeatureResult,
   CreateTeamResult,
   CreditMetadata,
   DailySpendRow,
@@ -264,7 +265,7 @@ export class PostgresStore implements CreditStore {
   async getUserPlan(userId: string): Promise<GetUserPlanResult> {
     const rows = await this.callproc("get_user_plan", [userId]);
     if (!rows || rows.length === 0) {
-      return { userId, planId: null, planName: null, freeAllowance: 0 };
+      return { userId, planId: null, planName: null, freeAllowance: 0, features: {} };
     }
     const row = rows[0] as Record<string, unknown>;
     return {
@@ -272,6 +273,18 @@ export class PostgresStore implements CreditStore {
       planId: (row.plan_id as string) ?? null,
       planName: (row.plan_name as string) ?? null,
       freeAllowance: Number(row.free_allowance ?? 0),
+      features: (row.features as Record<string, unknown>) ?? {},
+    };
+  }
+
+  async checkFeature(userId: string, feature: string): Promise<CheckFeatureResult> {
+    const plan = await this.getUserPlan(userId);
+    const value = plan.features[feature] ?? null;
+    return {
+      userId,
+      feature,
+      value,
+      hasFeature: value != null && Boolean(value),
     };
   }
 

@@ -78,7 +78,7 @@ export interface PlanDefinition {
   name: string;
   freeAllowance: number;
   rateOverrides?: Record<string, string> | null;
-  features?: Record<string, boolean> | null;
+  features?: Record<string, unknown> | null;
 }
 
 /** Result of checking plan allowance. */
@@ -95,9 +95,16 @@ export interface GetUserPlanResult {
   planId: string | null;
   planName: string | null;
   freeAllowance: number;
+  features: Record<string, unknown>;
 }
 
-/** Result of assigning a plan to a user. */
+/** Result of checking a user's feature entitlement. */
+export interface CheckFeatureResult {
+  userId: string;
+  feature: string;
+  value: unknown;
+  hasFeature: boolean;
+}
 export interface SetUserPlanResult {
   userId: string;
   planId: string;

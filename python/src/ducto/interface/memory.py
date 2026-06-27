@@ -357,6 +357,7 @@ class MemoryStore(CreditStore):
             plan_id=plan_id,
             plan_name=plan_def.name if plan_def else None,
             free_allowance=plan_def.free_allowance if plan_def else 0,
+            features=plan_def.features if plan_def and plan_def.features else {},
         )
 
     def set_user_plan(self, user_id: str, plan_id: str) -> SetUserPlanResult:

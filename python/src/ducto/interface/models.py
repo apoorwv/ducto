@@ -154,6 +154,16 @@ class GetUserPlanResult(BaseModel):
     plan_id: str | None = None
     plan_name: str | None = None
     free_allowance: int = 0
+    features: dict[str, Any] = Field(default_factory=dict)
+
+
+class CheckFeatureResult(BaseModel):
+    """Result of checking a user's feature entitlement."""
+
+    user_id: str
+    feature: str
+    value: Any = None
+    has_feature: bool = False
 
 
 class SetUserPlanResult(BaseModel):

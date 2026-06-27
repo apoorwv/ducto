@@ -237,7 +237,7 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
   it("plan allowance covers full cost, skips balance deduct", async () => {
     const store = new PostgresStore(DATABASE_URL!, pg.Pool);
     await pool.query(
-      `INSERT INTO public.credit_plans (id, name, free_allowance) VALUES ($1, 'Free', 100)`,
+      `INSERT INTO public.credit_plans (id, name, free_allowance, plan_key) VALUES ($1, 'Free', 100, $1)`,
       [PLAN_UUID],
     );
 
@@ -272,7 +272,7 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
   it("plan allowance partially covers, deducts remainder from balance", async () => {
     const store = new PostgresStore(DATABASE_URL!, pg.Pool);
     await pool.query(
-      `INSERT INTO public.credit_plans (id, name, free_allowance) VALUES ($1, 'Starter', 10)`,
+      `INSERT INTO public.credit_plans (id, name, free_allowance, plan_key) VALUES ($1, 'Starter', 10, $1)`,
       [PLAN_UUID],
     );
 
@@ -299,6 +299,37 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
 
     const allowance = await store.checkAllowance(PG_USER);
     expect(allowance.allowanceRemaining).toBe(0);
+  });
+
+  // ── Plan features / entitlements ───────────────────────────────────
+
+  it("plan features round-trip with checkFeature", async () => {
+    const store = new PostgresStore(DATABASE_URL!, pg.Pool);
+    const manager = new CreditManager(store);
+    await manager.publishPricingFromDict({
+      models: { _default: "input_tokens * 1" },
+      plans: {
+        pro: {
+          id: "plan-pro",
+          name: "Pro Plan",
+          freeAllowance: 500,
+          features: { aiChat: true, maxRoadmaps: 20 },
+        },
+      },
+    });
+
+    await store.setUserPlan(PG_USER, "pro");
+
+    const plan = await store.getUserPlan(PG_USER);
+    expect(plan.planName).toBe("Pro Plan");
+    expect(plan.features["aiChat"]).toBe(true);
+    expect(plan.features["maxRoadmaps"]).toBe(20);
+
+    const chat = await manager.checkFeature(PG_USER, "aiChat");
+    expect(chat.hasFeature).toBe(true);
+
+    const pdf = await manager.checkFeature(PG_USER, "exportPdf");
+    expect(pdf.hasFeature).toBe(false);
   });
 
   // ── Refunds ─────────────────────────────────────────────────────────

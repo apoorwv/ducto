@@ -50,4 +50,14 @@ describe("HttpxSupabaseStore", () => {
     const store = new HttpxSupabaseStore("https://localhost:1", "key");
     await expect(store.setActivePricing({ models: { a: "1" } })).rejects.toThrow();
   });
+
+  it("getUserPlan rejects with network error (no server)", async () => {
+    const store = new HttpxSupabaseStore("https://localhost:1", "key");
+    await expect(store.getUserPlan("u1")).rejects.toThrow();
+  });
+
+  it("checkFeature rejects with network error (no server)", async () => {
+    const store = new HttpxSupabaseStore("https://localhost:1", "key");
+    await expect(store.checkFeature("u1", "aiChat")).rejects.toThrow();
+  });
 });

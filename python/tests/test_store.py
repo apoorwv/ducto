@@ -151,6 +151,7 @@ class TestPlanManagement:
         assert result.plan_id is None
         assert result.plan_name is None
         assert result.free_allowance == 0
+        assert result.features == {}
 
     def test_set_and_get_user_plan(self) -> None:
         store = MemoryStore()
@@ -168,6 +169,61 @@ class TestPlanManagement:
         assert result.plan_id == "pro"
         assert result.plan_name == "Pro Plan"
         assert result.free_allowance == 500
+        assert result.features == {}
+
+    def test_get_user_plan_features(self) -> None:
+        store = MemoryStore()
+        v2 = PricingConfigData(
+            models={"_default": "1"},
+            plans={
+                "premium": PlanDefinition(
+                    id="premium",
+                    name="Premium Plan",
+                    free_allowance=2000,
+                    features={"ai_chat": True, "max_roadmaps": 20, "export_pdf": True},
+                ),
+            },
+        )
+        store.set_active_pricing(v2)
+        store.set_user_plan("user-1", "premium")
+
+        result = store.get_user_plan("user-1")
+        assert result.plan_id == "premium"
+        assert result.features["ai_chat"] is True
+        assert result.features["max_roadmaps"] == 20
+        assert result.features["export_pdf"] is True
+
+    def test_check_feature(self) -> None:
+        store = MemoryStore()
+        v2 = PricingConfigData(
+            models={"_default": "1"},
+            plans={
+                "premium": PlanDefinition(
+                    id="premium",
+                    name="Premium Plan",
+                    features={"ai_chat": True, "max_roadmaps": 20},
+                ),
+                "free": PlanDefinition(
+                    id="free",
+                    name="Free Plan",
+                    features={},
+                ),
+            },
+        )
+        store.set_active_pricing(v2)
+        store.set_user_plan("user-1", "premium")
+        store.set_user_plan("user-2", "free")
+
+        # Premium user has features
+        assert store.check_feature("user-1", "ai_chat").has_feature is True
+        assert store.check_feature("user-1", "ai_chat").value is True
+        assert store.check_feature("user-1", "max_roadmaps").value == 20
+        # Premium user missing feature
+        assert store.check_feature("user-1", "export_pdf").has_feature is False
+        # Free user — no features
+        assert store.check_feature("user-2", "ai_chat").has_feature is False
+        # No plan user
+        assert store.check_feature("nobody", "ai_chat").has_feature is False
 
     def test_check_allowance_no_plan(self) -> None:
         store = MemoryStore()

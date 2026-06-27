@@ -5,9 +5,11 @@ import type {
   AddCreditsResult,
   AggregateStats,
   BalanceResult,
+  CheckFeatureResult,
   CreditMetadata,
   DailySpendRow,
   DeductionResult,
+  GetUserPlanResult,
   PricingConfigData,
   RefundResult,
   ReserveResult,
@@ -98,6 +100,16 @@ export class CreditManager {
   /** The current PricingEngine, or null if not loaded. */
   get pricingEngine(): PricingEngine | null {
     return this.engine;
+  }
+
+  /** Fetch a user's current plan (including feature entitlements). */
+  async getUserPlan(userId: string): Promise<GetUserPlanResult> {
+    return this.store.getUserPlan(userId);
+  }
+
+  /** Check whether a user's plan has a specific feature entitlement. */
+  async checkFeature(userId: string, feature: string): Promise<CheckFeatureResult> {
+    return this.store.checkFeature(userId, feature);
   }
 
   /** Get a user's current credit balance. */

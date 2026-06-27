@@ -38,9 +38,11 @@ from ducto.interface.models import (
     AddCreditsResult,
     AggregateStatsRow,
     BalanceResult,
+    CheckFeatureResult,
     CreditMetadata,
     DailySpendRow,
     DeductionResult,
+    GetUserPlanResult,
     PricingConfigData,
     RefundResult,
     ReserveResult,
@@ -164,6 +166,24 @@ class CreditManager:
             },
         )
         return result
+
+    # -- Plan management ------------------------------------------------
+
+    def get_user_plan(self, user_id: str) -> GetUserPlanResult:
+        """Fetch user's current plan (including feature entitlements)."""
+        return self._store.get_user_plan(user_id)
+
+    def check_feature(self, user_id: str, feature: str) -> CheckFeatureResult:
+        """Check whether a user's plan has a specific feature entitlement.
+
+        Convenience wrapper around the store's check_feature() -- inspect
+        the features dict on a user's plan to gate functionality.
+
+        Feature values follow a truthy convention:
+        - False / None / absent => has_feature=False
+        - True / numeric / string   => has_feature=True
+        """
+        return self._store.check_feature(user_id, feature)
 
     def reserve_credits(
         self,

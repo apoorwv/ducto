@@ -331,10 +331,11 @@ class HttpxSupabaseStore(CreditStore):
             plan_id=row.get("plan_id") or None,
             plan_name=row.get("plan_name") or None,
             free_allowance=int(row.get("free_allowance", 0)),
+            features=row.get("features") or {},
         )
 
     def set_user_plan(self, user_id: str, plan_id: str) -> SetUserPlanResult:
-        row = self._rpc("set_user_plan", {"p_user_id": user_id, "p_plan_id": plan_id})
+        row = self._rpc("set_user_plan", {"p_user_id": user_id, "p_plan_key": plan_id})
         return SetUserPlanResult(
             user_id=str(row.get("user_id", user_id)),
             plan_id=str(row.get("plan_id", plan_id)),

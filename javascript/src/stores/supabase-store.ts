@@ -5,6 +5,7 @@ import type {
   AllowanceResult,
   BalanceResult,
   CapCheckResult,
+  CheckFeatureResult,
   CreateTeamResult,
   CreditMetadata,
   DailySpendRow,
@@ -216,20 +217,32 @@ export class HttpxSupabaseStore implements CreditStore {
   async getUserPlan(userId: string): Promise<GetUserPlanResult> {
     const row = await this.rpc("get_user_plan", { p_user_id: userId });
     if (!row || Object.keys(row).length === 0) {
-      return { userId, planId: null, planName: null, freeAllowance: 0 };
+      return { userId, planId: null, planName: null, freeAllowance: 0, features: {} };
     }
     return {
       userId: String(row.user_id ?? userId),
       planId: (row.plan_id as string) ?? null,
       planName: (row.plan_name as string) ?? null,
       freeAllowance: Number(row.free_allowance ?? 0),
+      features: (row.features as Record<string, unknown>) ?? {},
+    };
+  }
+
+  async checkFeature(userId: string, feature: string): Promise<CheckFeatureResult> {
+    const plan = await this.getUserPlan(userId);
+    const value = plan.features[feature] ?? null;
+    return {
+      userId,
+      feature,
+      value,
+      hasFeature: value != null && Boolean(value),
     };
   }
 
   async setUserPlan(userId: string, planId: string): Promise<SetUserPlanResult> {
     const row = await this.rpc("set_user_plan", {
       p_user_id: userId,
-      p_plan_id: planId,
+      p_plan_key: planId,
     });
     return {
       userId: String(row.user_id ?? userId),

@@ -17,6 +17,7 @@ from ducto.interface.models import (
     AllowanceResult,
     BalanceResult,
     CapCheckResult,
+    CheckFeatureResult,
     CreateTeamResult,
     CreditMetadata,
     DailySpendRow,
@@ -166,8 +167,28 @@ class CreditStore(ABC):
 
     @abstractmethod
     def get_user_plan(self, user_id: str) -> GetUserPlanResult:
-        """Fetch user's current plan (if any)."""
+        """Fetch user's current plan (including feature entitlements)."""
         ...
+
+    def check_feature(self, user_id: str, feature: str) -> CheckFeatureResult:
+        """Check whether a user's plan has a specific feature entitlement.
+
+        Convenience method. Default implementation calls ``get_user_plan()``
+        and inspects the ``features`` dict. Override in custom stores for
+        optimized queries.
+
+        Feature values follow a truthy convention:
+        - ``False`` / ``None`` / absent → ``has_feature=False``
+        - ``True`` / numeric / string   → ``has_feature=True``
+        """
+        plan = self.get_user_plan(user_id)
+        value = plan.features.get(feature)
+        return CheckFeatureResult(
+            user_id=user_id,
+            feature=feature,
+            value=value,
+            has_feature=bool(value),
+        )
 
     @abstractmethod
     def set_user_plan(self, user_id: str, plan_id: str) -> SetUserPlanResult:

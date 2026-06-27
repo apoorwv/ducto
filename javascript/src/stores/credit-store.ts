@@ -5,6 +5,7 @@ import type {
   AllowanceResult,
   BalanceResult,
   CapCheckResult,
+  CheckFeatureResult,
   CreateTeamResult,
   CreditMetadata,
   DailySpendRow,
@@ -56,6 +57,7 @@ export interface CreditStore {
   // ── Plan management ────────────────────────────────────────────────
   getUserPlan(userId: string): Promise<GetUserPlanResult>;
   setUserPlan(userId: string, planId: string): Promise<SetUserPlanResult>;
+  checkFeature(userId: string, feature: string): Promise<CheckFeatureResult>;
   checkAllowance(userId: string): Promise<AllowanceResult>;
   incrementUsageWindow(userId: string, planId: string, amount: number): Promise<void>;
 

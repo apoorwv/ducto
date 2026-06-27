@@ -234,6 +234,39 @@ describe("CreditManager", () => {
       const result = await mgr.deduct("user-1", { inputTokens: 10 });
       expect(result.amount).toBe(0); // fully covered by plan allowance
     });
+
+    it("checkFeature through manager returns correct results", async () => {
+      const store = new MemoryStore();
+      const config: PricingConfigData = {
+        models: { _default: "input_tokens * 1" },
+        plans: {
+          premium: {
+            id: "premium",
+            name: "Premium",
+            freeAllowance: 2000,
+            features: { aiChat: true, maxRoadmaps: 20 },
+          },
+        },
+      };
+      store.setActivePricing(config);
+      store.setUserPlan("user-1", "premium");
+
+      const mgr = new CreditManager(store);
+      mgr.publishPricingFromDict(config);
+
+      const chat = await mgr.checkFeature("user-1", "aiChat");
+      expect(chat.hasFeature).toBe(true);
+      expect(chat.value).toBe(true);
+
+      const roadmaps = await mgr.checkFeature("user-1", "maxRoadmaps");
+      expect(roadmaps.value).toBe(20);
+
+      const pdf = await mgr.checkFeature("user-1", "exportPdf");
+      expect(pdf.hasFeature).toBe(false);
+
+      const nobody = await mgr.checkFeature("nobody", "aiChat");
+      expect(nobody.hasFeature).toBe(false);
+    });
   });
 
   describe("refunds", () => {

@@ -283,7 +283,7 @@ class PostgresStore(CreditStore):
             with conn.cursor() as cur:
                 cur.callproc(
                     "set_active_pricing_config",
-                    [json.dumps(config.model_dump(mode="json")), label],
+                    [json.dumps(config.model_dump(mode="json", exclude_none=True)), label],
                 )
                 row = cur.fetchone()
             conn.commit()
@@ -354,6 +354,7 @@ class PostgresStore(CreditStore):
             plan_id=result_dict.get("plan_id") or None,
             plan_name=result_dict.get("plan_name") or None,
             free_allowance=int(result_dict.get("free_allowance", 0)),
+            features=result_dict.get("features") or {},
         )
 
     def set_user_plan(self, user_id: str, plan_id: str) -> SetUserPlanResult:

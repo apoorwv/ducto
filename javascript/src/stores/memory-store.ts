@@ -6,6 +6,7 @@ import type {
   AllowanceResult,
   BalanceResult,
   CapCheckResult,
+  CheckFeatureResult,
   CreateTeamResult,
   CreditMetadata,
   DailySpendRow,
@@ -267,6 +268,18 @@ export class MemoryStore implements CreditStore {
       planId,
       planName: planDef?.name ?? null,
       freeAllowance: planDef?.freeAllowance ?? 0,
+      features: (planDef?.features as Record<string, unknown>) ?? {},
+    };
+  }
+
+  async checkFeature(userId: string, feature: string): Promise<CheckFeatureResult> {
+    const plan = await this.getUserPlan(userId);
+    const value = plan.features[feature] ?? null;
+    return {
+      userId,
+      feature,
+      value,
+      hasFeature: value != null && Boolean(value),
     };
   }
 

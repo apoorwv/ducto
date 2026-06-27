@@ -204,7 +204,7 @@ END;
 $$;
 
 REVOKE EXECUTE ON FUNCTION public.get_user_plan FROM anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.set_user_plan FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.set_user_plan(UUID, UUID) FROM anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.check_plan_allowance FROM anon, authenticated;
 REVOKE EXECUTE ON FUNCTION public.increment_usage_window FROM anon, authenticated;
 

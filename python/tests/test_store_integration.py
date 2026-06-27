@@ -13,6 +13,7 @@ import pytest
 
 from ducto import CreditManager, UsageMetrics
 from ducto.interface.memory import MemoryStore
+from ducto.interface.models import PlanDefinition, PricingConfigData
 from ducto.interface.postgres import PostgresStore
 from ducto.interface.supabase import HttpxSupabaseStore
 
@@ -91,6 +92,34 @@ class TestMemoryStoreIntegration:
         r2 = manager.reserve_credits("user_1", 80)
         assert r2.error == "insufficient_credits"
 
+    def test_check_feature(self) -> None:
+        store = MemoryStore()
+        store.setup()
+        store.set_active_pricing(
+            PricingConfigData(
+                models={"_default": "1"},
+                plans={
+                    "pro": PlanDefinition(
+                        id="pro",
+                        name="Pro",
+                        free_allowance=500,
+                        features={"ai_chat": True, "max_roadmaps": 20},
+                    ),
+                },
+            )
+        )
+        store.set_user_plan("user_1", "pro")
+
+        result = store.check_feature("user_1", "ai_chat")
+        assert result.has_feature is True
+        assert result.value is True
+
+        result = store.check_feature("user_1", "export_pdf")
+        assert result.has_feature is False
+
+        result = store.check_feature("nobody", "ai_chat")
+        assert result.has_feature is False
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # PostgresStore
@@ -120,6 +149,35 @@ class TestPostgresStoreIntegration:
 
     def test_full_flow_pg(self, manager: CreditManager) -> None:
         _add_and_deduct(manager, _PG_USER)
+
+    def test_check_feature_pg(self, store: PostgresStore) -> None:
+        # Publish pricing with plan features → plans get synced to credit_plans
+        store.set_active_pricing(
+            PricingConfigData(
+                models={"_default": "1"},
+                plans={
+                    "pro": PlanDefinition(
+                        id="pro",
+                        name="Pro Plan",
+                        free_allowance=500,
+                        features={"ai_chat": True, "max_roadmaps": 20},
+                    ),
+                },
+            )
+        )
+        # set_user_plan resolves "pro" plan_key to credit_plans UUID internally
+        store.set_user_plan(_PG_USER, "pro")
+
+        result = store.get_user_plan(_PG_USER)
+        assert result.plan_name == "Pro Plan"
+        assert result.features["ai_chat"] is True
+        assert result.features["max_roadmaps"] == 20
+
+        result = store.check_feature(_PG_USER, "ai_chat")
+        assert result.has_feature is True
+
+        result = store.check_feature(_PG_USER, "export_pdf")
+        assert result.has_feature is False
 
     def test_balance_persists_across_managers(self, store: PostgresStore) -> None:
         m1 = CreditManager(store=store)
@@ -258,7 +316,30 @@ class TestHttpxSupabaseStoreIntegration:
         assert result is None
 
     def test_set_active_pricing(self, store: HttpxSupabaseStore) -> None:
-        from ducto.interface.models import PricingConfigData
+        pass
+
+    def test_get_user_plan_features_supabase(self, store: HttpxSupabaseStore) -> None:
+        self._mock_post(
+            store,
+            {
+                "user_id": "u1",
+                "plan_id": "pro",
+                "plan_name": "Pro Plan",
+                "free_allowance": 500,
+                "features": {"ai_chat": True, "max_roadmaps": 20},
+            },
+        )
+        result = store.get_user_plan("u1")
+        assert result.plan_id == "pro"
+        assert result.features["ai_chat"] is True
+        assert result.features["max_roadmaps"] == 20
+
+        result = store.check_feature("u1", "ai_chat")
+        assert result.has_feature is True
+        assert result.value is True
+
+        result = store.check_feature("u1", "export_pdf")
+        assert result.has_feature is False
 
         self._mock_post(store, {"id": "cfg_1"})
         config = PricingConfigData(models={"_default": "1"})
