@@ -306,7 +306,10 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
   it("plan features round-trip with checkFeature", async () => {
     const store = new PostgresStore(DATABASE_URL!, pg.Pool);
     const manager = new CreditManager(store);
-    await manager.publishPricingFromDict({
+
+    // Use store.setActivePricing directly (not manager.publishPricingFromDict)
+    // to avoid the fire-and-forget void pattern in the manager
+    await store.setActivePricing({
       models: { _default: "input_tokens * 1" },
       plans: {
         pro: {
@@ -317,6 +320,7 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
         },
       },
     });
+    await manager.loadPricingFromStore();
 
     await store.setUserPlan(PG_USER, "pro");
 

@@ -56,10 +56,10 @@ export class CreditManager {
   }
 
   /** Load pricing from a PricingConfigData or raw dict and sync it. */
-  publishPricingFromDict(data: PricingConfigData | Record<string, unknown>): void {
+  async publishPricingFromDict(data: PricingConfigData | Record<string, unknown>): Promise<void> {
     const raw = data as Record<string, unknown>;
     this.engine = PricingEngineClass.fromDict(raw);
-    void this.store.setActivePricing(data as PricingConfigData);
+    await this.store.setActivePricing(data as PricingConfigData);
   }
 
   /** Load the active pricing config from the store. */
