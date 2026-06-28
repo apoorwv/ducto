@@ -142,6 +142,7 @@ DECLARE
     v_transaction_id UUID;
     v_ref_id UUID;
     v_idempotency_key TEXT;
+    v_operation_type TEXT;
 BEGIN
     IF auth.role() IS DISTINCT FROM 'service_role' THEN
         RETURN jsonb_build_object('error', 'unauthorized');
@@ -194,11 +195,16 @@ BEGIN
         v_ref_id := NULL;
     END;
 
+    -- Read reservation's operation_type before releasing
+    SELECT operation_type INTO v_operation_type
+    FROM public.credit_reservations
+    WHERE id = p_reservation_id AND user_id = p_user_id;
+
     INSERT INTO public.credit_transactions
         (user_id, amount, type, reference_type, reference_id, metadata)
     VALUES
         (p_user_id, -p_amount, 'usage',
-         p_metadata->>'reference_type',
+         COALESCE(p_metadata->>'reference_type', v_operation_type),
          v_ref_id,
          p_metadata)
     RETURNING id INTO v_transaction_id;

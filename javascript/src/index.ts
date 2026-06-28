@@ -37,6 +37,10 @@ export type {
   SetupResult,
   SpendByModelRow,
   SpendByUserRow,
+  ListTransactionsOptions,
+  ListUsageEventsOptions,
+  PaginatedTransactions,
+  UserTransactionRow,
   SpendCap,
   SweepResult,
   Team,
@@ -48,13 +52,9 @@ export type {
 
 // Stores
 export type { CreditStore } from "./stores/credit-store.js";
-export { MemoryStore } from "./stores/memory-store.js";
 export { HttpxSupabaseStore } from "./stores/supabase-store.js";
 export { PostgresStore } from "./stores/postgres-store.js";
 
 // Events
 export type { CreditEvent, CreditEventType } from "./stores/events.js";
 export { CreditEventEmitter } from "./stores/events.js";
-
-// Utilities
-export { loadPricingFile } from "./load-pricing-file.js";

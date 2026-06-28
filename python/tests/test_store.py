@@ -465,6 +465,56 @@ class TestUsageAnalytics:
         assert rows[0].total_spend == 75
         assert rows[0].transaction_count == 1
 
+    # ── Transaction listing ─────────────────────────────────────────────────
+
+    def test_list_transactions_returns_all_for_user(self) -> None:
+        from ducto.interface.models import CreditMetadata
+
+        store = MemoryStore()
+        store.add_credits("user_1", 1000, "purchase", CreditMetadata(ref="purchase-1"))
+        store.add_credits("user_1", 500, "signup_bonus", CreditMetadata(ref="bonus-1"))
+        r = store.reserve_credits("user_1", 200, "usage")
+        store.deduct_credits("user_1", r.reservation_id, 200, metadata=CreditMetadata(model="gpt-4"))
+        store.add_credits("user_2", 999, "purchase")
+        result = store.list_user_transactions("user_1")
+        assert len(result) == 3
+        assert result[0].total_count == 3
+
+    def test_list_transactions_filters_by_type(self) -> None:
+        from ducto.interface.models import CreditMetadata
+
+        store = MemoryStore()
+        store.add_credits("user_1", 1000, "purchase")
+        store.add_credits("user_1", 500, "signup_bonus")
+        r = store.reserve_credits("user_1", 200, "usage")
+        store.deduct_credits("user_1", r.reservation_id, 200, metadata=CreditMetadata(model="gpt-4"))
+        result = store.list_user_transactions("user_1", types=["usage"])
+        assert len(result) == 1
+        assert result[0].type == "usage"
+        assert result[0].total_count == 1
+
+    def test_list_transactions_paginates(self) -> None:
+        store = MemoryStore()
+        for _i in range(5):
+            store.add_credits("user_1", 100, "purchase")
+        page = store.list_user_transactions("user_1", limit=2, offset=0)
+        assert len(page) == 2
+        assert page[0].total_count == 5
+
+    def test_list_transactions_orders_by_created_at_desc(self) -> None:
+        store = MemoryStore()
+        store.add_credits("user_1", 100, "purchase")
+        store.add_credits("user_1", 200, "purchase")
+        store.add_credits("user_1", 300, "purchase")
+        result = store.list_user_transactions("user_1")
+        for i in range(1, len(result)):
+            assert result[i].created_at <= result[i - 1].created_at
+
+    def test_list_transactions_returns_empty_for_no_transactions(self) -> None:
+        store = MemoryStore()
+        result = store.list_user_transactions("no_such_user")
+        assert len(result) == 0
+
 
 def test_load_pricing_file_json(tmp_path) -> None:
     """Load a JSON pricing file via _load_pricing_file."""

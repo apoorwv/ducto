@@ -11,6 +11,9 @@ import type {
   DailySpendRow,
   DeductionResult,
   GetUserPlanResult,
+  ListTransactionsOptions,
+  ListUsageEventsOptions,
+  PaginatedTransactions,
   PricingConfigData,
   PricingConfigResult,
   RefundResult,
@@ -80,6 +83,13 @@ export interface CreditStore {
   spendByModel(start: Date, end: Date): Promise<SpendByModelRow[]>;
   topUsers(limit: number, start: Date, end: Date): Promise<TopUserRow[]>;
   dailySpend(start: Date, end: Date): Promise<DailySpendRow[]>;
+
+  // ── Transaction listing ─────────────────────────────────────────────
+  listUserTransactions(
+    userId: string,
+    options?: ListTransactionsOptions,
+  ): Promise<PaginatedTransactions>;
+  listUsageEvents(userId: string, options?: ListUsageEventsOptions): Promise<PaginatedTransactions>;
 
   // ── Aggregate stats ────────────────────────────────────────────────
   aggregateStats(start: Date, end: Date): Promise<AggregateStats>;

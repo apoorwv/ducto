@@ -37,6 +37,7 @@ from ducto.interface.models import (
     TeamDeductionResult,
     TeamMember,
     TopUserRow,
+    TransactionRow,
 )
 
 
@@ -333,6 +334,34 @@ class CreditStore(ABC):
         Returns:
             ``AggregateStatsRow`` with total credits consumed, active users,
             average daily spend, top model, and top user.
+        """
+        ...
+
+    # ── Transaction listing ─────────────────────────────────────────────────
+
+    @abstractmethod
+    def list_user_transactions(
+        self,
+        user_id: str,
+        types: list[str] | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[TransactionRow]:
+        """List credit transactions for a user with pagination.
+
+        Args:
+            user_id: The user to query.
+            types: Optional filter by transaction types (e.g. ["usage"]).
+            from_date: Optional start of date range (inclusive).
+            to_date: Optional end of date range (inclusive).
+            limit: Maximum rows to return (default 50).
+            offset: Number of rows to skip (default 0).
+
+        Returns:
+            List of ``TransactionRow`` objects. Each row includes ``total_count``
+            representing the total matching rows before pagination.
         """
         ...
 

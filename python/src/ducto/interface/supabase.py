@@ -38,6 +38,7 @@ from ducto.interface.models import (
     TeamDeductionResult,
     TeamMember,
     TopUserRow,
+    TransactionRow,
 )
 from ducto.sql import _get_sql_files
 
@@ -496,6 +497,43 @@ class HttpxSupabaseStore(CreditStore):
             top_model=str(row.get("top_model", "")),
             top_user=str(row.get("top_user", "")),
         )
+
+    # ── Transaction listing ─────────────────────────────────────────────────
+
+    def list_user_transactions(
+        self,
+        user_id: str,
+        types: list[str] | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[TransactionRow]:
+        rows = self._rpc_list(
+            "list_user_transactions",
+            {
+                "p_user_id": user_id,
+                "p_types": types,
+                "p_from_date": from_date.isoformat() if from_date else None,
+                "p_to_date": to_date.isoformat() if to_date else None,
+                "p_limit": limit,
+                "p_offset": offset,
+            },
+        )
+        return [
+            TransactionRow(
+                id=str(r.get("id", "")),
+                user_id=str(r.get("user_id", "")),
+                amount=int(r.get("amount", 0)),
+                type=str(r.get("type", "")),
+                reference_type=str(r["reference_type"]) if r.get("reference_type") else None,
+                reference_id=str(r["reference_id"]) if r.get("reference_id") else None,
+                metadata=r.get("metadata"),
+                created_at=str(r.get("created_at", "")),
+                total_count=int(r.get("total_count", 0)),
+            )
+            for r in rows
+        ]
 
     # ── Team/shared balance pools ─────────────────────────────────────────
 

@@ -20,6 +20,11 @@ import type {
   TeamDeductionResult,
   TopUserRow,
 } from "./types.js";
+import type {
+  ListTransactionsOptions,
+  ListUsageEventsOptions,
+  PaginatedTransactions,
+} from "./types.js";
 import type { CreditStore } from "./stores/credit-store.js";
 import type { CreditEventEmitter, CreditEventType } from "./stores/events.js";
 import type { UsageMetrics } from "./metrics.js";
@@ -375,6 +380,21 @@ export class CreditManager {
   /** Aggregate spend by model in a time window. */
   async spendByModel(start: Date, end: Date): Promise<SpendByModelRow[]> {
     return await this.store.spendByModel(start, end);
+  }
+
+  /** List all user credit transactions with pagination. */
+  async listUserTransactions(
+    userId: string,
+    options?: ListTransactionsOptions,
+  ): Promise<PaginatedTransactions> {
+    return await this.store.listUserTransactions(userId, options);
+  }
+
+  async listUsageEvents(
+    userId: string,
+    options?: ListUsageEventsOptions,
+  ): Promise<PaginatedTransactions> {
+    return await this.store.listUsageEvents(userId, options);
   }
 
   /** Top users by spend in a time window with limit. */

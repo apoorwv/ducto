@@ -635,4 +635,76 @@ describe("MemoryStore", () => {
       expect(result.limit).toBe(100);
     });
   });
+
+  describe("listUserTransactions", () => {
+    beforeEach(async () => {
+      await store.addCredits("user-1", 1000, "purchase", { ref: "purchase-1" });
+      await store.addCredits("user-1", 500, "signup_bonus", { ref: "bonus-1" });
+      const r1 = await store.reserveCredits("user-1", 200, "usage", { model: "gpt-4" });
+      await store.deductCredits("user-1", r1.reservationId, 200, null, { model: "gpt-4" });
+      const r2 = await store.reserveCredits("user-1", 50, "usage", { model: "claude-3" });
+      await store.deductCredits("user-1", r2.reservationId, 50, null, { model: "claude-3" });
+      await store.addCredits("user-2", 999, "purchase");
+    });
+
+    it("returns all transactions for user unfiltered", async () => {
+      const result = await store.listUserTransactions("user-1");
+      expect(result.total).toBe(4);
+      expect(result.items).toHaveLength(4);
+    });
+
+    it("filters by type", async () => {
+      const result = await store.listUserTransactions("user-1", { types: ["usage"] });
+      expect(result.total).toBe(2);
+      expect(result.items).toHaveLength(2);
+      expect(result.items.every((t) => t.type === "usage")).toBe(true);
+    });
+
+    it("filters by date range", async () => {
+      const now = new Date();
+      const future = new Date(now.getTime() + 86_400_000);
+      const past = new Date(now.getTime() - 86_400_000);
+      const result = await store.listUserTransactions("user-1", {
+        fromDate: future,
+      });
+      expect(result.total).toBe(0);
+      const all = await store.listUserTransactions("user-1", {
+        fromDate: past,
+        toDate: future,
+      });
+      expect(all.total).toBe(4);
+    });
+
+    it("paginates with limit and offset", async () => {
+      const page1 = await store.listUserTransactions("user-1", { limit: 2, offset: 0 });
+      expect(page1.items).toHaveLength(2);
+      expect(page1.total).toBe(4);
+
+      const page2 = await store.listUserTransactions("user-1", { limit: 2, offset: 2 });
+      expect(page2.items).toHaveLength(2);
+      expect(page2.total).toBe(4);
+
+      expect(page1.items[0].id).not.toBe(page2.items[0].id);
+    });
+
+    it("orders by created_at descending", async () => {
+      const result = await store.listUserTransactions("user-1", { limit: 10 });
+      const dates = result.items.map((t) => new Date(t.createdAt).getTime());
+      for (let i = 1; i < dates.length; i++) {
+        expect(dates[i]).toBeLessThanOrEqual(dates[i - 1]);
+      }
+    });
+
+    it("does not include other users' transactions", async () => {
+      const result = await store.listUserTransactions("user-2");
+      expect(result.total).toBe(1);
+      expect(result.items[0].type).toBe("purchase");
+    });
+
+    it("returns empty for user with no transactions", async () => {
+      const result = await store.listUserTransactions("no-such-user");
+      expect(result.total).toBe(0);
+      expect(result.items).toHaveLength(0);
+    });
+  });
 });

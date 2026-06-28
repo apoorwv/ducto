@@ -236,6 +236,23 @@ class AggregateStatsRow(BaseModel):
     top_user: str = ""
 
 
+# ── Transaction listing ────────────────────────────────────────────────────
+
+
+class TransactionRow(BaseModel):
+    """A single credit transaction row."""
+
+    id: str = ""
+    user_id: str = ""
+    amount: int = 0
+    type: str = ""
+    reference_type: str | None = None
+    reference_id: str | None = None
+    metadata: dict[str, Any] | None = None
+    created_at: str = ""
+    total_count: int = 0
+
+
 # ── Spend caps and rate limiting ───────────────────────────────────────
 
 

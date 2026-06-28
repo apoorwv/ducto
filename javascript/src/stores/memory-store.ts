@@ -12,6 +12,9 @@ import type {
   DailySpendRow,
   DeductionResult,
   GetUserPlanResult,
+  ListTransactionsOptions,
+  ListUsageEventsOptions,
+  PaginatedTransactions,
   PlanDefinition,
   PricingConfigData,
   PricingConfigResult,
@@ -498,6 +501,81 @@ export class MemoryStore implements CreditStore {
     return byUser.sort((a, b) => b.totalSpend - a.totalSpend).slice(0, limit);
   }
 
+  // ── Transaction listing ─────────────────────────────────────────────
+
+  async listUserTransactions(
+    userId: string,
+    options?: ListTransactionsOptions,
+  ): Promise<PaginatedTransactions> {
+    const limit = options?.limit ?? 50;
+    const offset = options?.offset ?? 0;
+
+    const filtered = this.transactions.filter((t) => {
+      if (t.userId !== userId) return false;
+      if (options?.types && !options.types.includes(t.type)) return false;
+      if (options?.fromDate && new Date(t.createdAt) < options.fromDate) return false;
+      if (options?.toDate && new Date(t.createdAt) > options.toDate) return false;
+      return true;
+    });
+
+    // Sort newest first
+    filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const total = filtered.length;
+    const items = filtered.slice(offset, offset + limit);
+
+    return {
+      total,
+      items: items.map((t) => ({
+        id: t.id,
+        userId: t.userId,
+        amount: t.amount,
+        type: t.type,
+        referenceType: t.referenceType ?? null,
+        referenceId: t.referenceId ?? null,
+        metadata: (t.metadata as Record<string, unknown> | null) ?? null,
+        createdAt: t.createdAt,
+      })),
+    };
+  }
+
+  async listUsageEvents(
+    userId: string,
+    options?: ListUsageEventsOptions,
+  ): Promise<PaginatedTransactions> {
+    let items = this.transactions.filter((t) => t.userId === userId && t.type === "usage");
+
+    if (options?.fromDate) {
+      const from = new Date(options.fromDate);
+      items = items.filter((t) => new Date(t.createdAt) >= from);
+    }
+    if (options?.toDate) {
+      const to = new Date(options.toDate);
+      items = items.filter((t) => new Date(t.createdAt) <= to);
+    }
+
+    const total = items.length;
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? 50;
+    const page = items
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(offset, offset + limit);
+
+    return {
+      total,
+      items: page.map((t) => ({
+        id: t.id,
+        userId: t.userId,
+        amount: t.amount,
+        type: t.type,
+        referenceType: t.referenceType ?? null,
+        referenceId: t.referenceId ?? null,
+        metadata: (t.metadata as Record<string, unknown> | null) ?? null,
+        createdAt: t.createdAt,
+      })),
+    };
+  }
+
   // ── Aggregate stats ──────────────────────────────────────────────────
 
   async aggregateStats(start: Date, end: Date): Promise<AggregateStats> {
@@ -523,8 +601,13 @@ export class MemoryStore implements CreditStore {
       byUser.set(t.userId, (byUser.get(t.userId) ?? 0) + Math.abs(t.amount));
     }
     const topModel =
-      byModel.size > 0 ? [...byModel.entries()].sort((a, b) => b[1] - a[1])[0][0] : "";
-    const topUser = byUser.size > 0 ? [...byUser.entries()].sort((a, b) => b[1] - a[1])[0][0] : "";
+      byModel.size > 0
+        ? [...byModel.entries()].reduce((best, curr) => (curr[1] > best[1] ? curr : best))[0]
+        : "";
+    const topUser =
+      byUser.size > 0
+        ? [...byUser.entries()].reduce((best, curr) => (curr[1] > best[1] ? curr : best))[0]
+        : "";
     return { totalCreditsConsumed: total, activeUsers, avgDailySpend, topModel, topUser };
   }
 

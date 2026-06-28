@@ -7,6 +7,7 @@ MemoryStore needs zero infra.
 
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -191,6 +192,27 @@ class TestPostgresStoreIntegration:
         balance = m2.get_balance(_PG_USER)
         assert balance.balance == 100 - _EXPECTED_COST
 
+    def test_list_user_transactions_pg(self, store: PostgresStore) -> None:
+        from ducto.interface.models import CreditMetadata
+
+        store.add_credits(_PG_USER, 1000, "purchase", CreditMetadata(ref="purchase-1"))
+        store.add_credits(_PG_USER, 500, "signup_bonus")
+        r = store.reserve_credits(_PG_USER, 200, "usage")
+        store.deduct_credits(_PG_USER, r.reservation_id, 200, metadata=CreditMetadata(model="gpt-4"))
+        result = store.list_user_transactions(_PG_USER)
+        assert len(result) == 3
+        assert result[0].total_count == 3
+        assert sum(1 for t in result if t.type == "usage") == 1
+
+        # pagination
+        page = store.list_user_transactions(_PG_USER, limit=1, offset=0)
+        assert len(page) == 1
+        assert page[0].total_count == 3
+
+        page2 = store.list_user_transactions(_PG_USER, limit=2, offset=1)
+        assert len(page2) == 2
+        assert page2[0].total_count == 3
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # HttpxSupabaseStore
@@ -317,6 +339,39 @@ class TestHttpxSupabaseStoreIntegration:
 
     def test_set_active_pricing(self, store: HttpxSupabaseStore) -> None:
         pass
+
+    def test_list_user_transactions_supabase(self, store: HttpxSupabaseStore) -> None:
+        now = datetime.now().isoformat()
+        mock_data = [
+            {
+                "id": "tx1",
+                "user_id": "u1",
+                "amount": 1000,
+                "type": "purchase",
+                "reference_type": None,
+                "reference_id": None,
+                "metadata": {},
+                "created_at": now,
+                "total_count": 2,
+            },
+            {
+                "id": "tx2",
+                "user_id": "u1",
+                "amount": -200,
+                "type": "usage",
+                "reference_type": None,
+                "reference_id": None,
+                "metadata": {"model": "gpt-4"},
+                "created_at": now,
+                "total_count": 2,
+            },
+        ]
+        self._mock_post(store, mock_data)
+        result = store.list_user_transactions("u1")
+        assert len(result) == 2
+        assert result[0].total_count == 2
+        assert result[0].type == "purchase"
+        assert result[1].type == "usage"
 
     def test_get_user_plan_features_supabase(self, store: HttpxSupabaseStore) -> None:
         self._mock_post(

@@ -37,6 +37,7 @@ from ducto.interface.models import (
     TeamDeductionResult,
     TeamMember,
     TopUserRow,
+    TransactionRow,
 )
 
 
@@ -688,6 +689,43 @@ class MemoryStore(CreditStore):
                 )
 
         return CapCheckResult(capped=False, current_spend=0, cap_limit=0, action=None)
+
+    # ── Transaction listing ─────────────────────────────────────────────────
+
+    def list_user_transactions(
+        self,
+        user_id: str,
+        types: list[str] | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[TransactionRow]:
+        filtered = [
+            t
+            for t in self._transactions
+            if t.user_id == user_id
+            and (types is None or t.type in types)
+            and (from_date is None or t.created_at >= from_date.isoformat())
+            and (to_date is None or t.created_at <= to_date.isoformat())
+        ]
+        filtered.sort(key=lambda t: t.created_at, reverse=True)
+        total = len(filtered)
+        page = filtered[offset : offset + limit]
+        return [
+            TransactionRow(
+                id=t.id,
+                user_id=t.user_id,
+                amount=t.amount,
+                type=t.type,
+                reference_type=t.reference_type,
+                reference_id=t.reference_id,
+                metadata=t.metadata,
+                created_at=t.created_at,
+                total_count=total,
+            )
+            for t in page
+        ]
 
     # ── Team/shared balance pools ─────────────────────────────────────────
 

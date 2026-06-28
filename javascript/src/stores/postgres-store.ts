@@ -11,6 +11,9 @@ import type {
   DailySpendRow,
   DeductionResult,
   GetUserPlanResult,
+  ListTransactionsOptions,
+  ListUsageEventsOptions,
+  PaginatedTransactions,
   PricingConfigData,
   PricingConfigResult,
   RefundResult,
@@ -417,6 +420,67 @@ export class PostgresStore implements CreditStore {
         transactionCount: Number(row.transaction_count ?? 0),
       };
     });
+  }
+
+  // ── Transaction listing ─────────────────────────────────────────────
+
+  async listUserTransactions(
+    userId: string,
+    options?: ListTransactionsOptions,
+  ): Promise<PaginatedTransactions> {
+    const rows = await this.callproc("list_user_transactions", [
+      userId,
+      options?.types ?? null,
+      options?.fromDate?.toISOString() ?? null,
+      options?.toDate?.toISOString() ?? null,
+      options?.limit ?? 50,
+      options?.offset ?? 0,
+    ]);
+    const items = (rows ?? []).map((r) => {
+      const row = r as Record<string, unknown>;
+      return {
+        id: String(row.id ?? ""),
+        userId: String(row.user_id ?? ""),
+        amount: Number(row.amount ?? 0),
+        type: String(row.type ?? ""),
+        referenceType: row.reference_type != null ? String(row.reference_type) : null,
+        referenceId: row.reference_id != null ? String(row.reference_id) : null,
+        metadata: (row.metadata as Record<string, unknown> | null) ?? null,
+        createdAt: String(row.created_at ?? ""),
+      };
+    });
+    const total =
+      rows.length > 0 ? Number((rows[0] as Record<string, unknown>).total_count ?? 0) : 0;
+    return { items, total };
+  }
+
+  async listUsageEvents(
+    userId: string,
+    options?: ListUsageEventsOptions,
+  ): Promise<PaginatedTransactions> {
+    const rows = await this.callproc("list_usage_events", [
+      userId,
+      options?.fromDate?.toISOString() ?? null,
+      options?.toDate?.toISOString() ?? null,
+      options?.limit ?? 50,
+      options?.offset ?? 0,
+    ]);
+    const items = (rows ?? []).map((r) => {
+      const row = r as Record<string, unknown>;
+      return {
+        id: String(row.id ?? ""),
+        userId: String(row.user_id ?? ""),
+        amount: Number(row.amount ?? 0),
+        type: String(row.type ?? ""),
+        referenceType: row.reference_type != null ? String(row.reference_type) : null,
+        referenceId: row.reference_id != null ? String(row.reference_id) : null,
+        metadata: (row.metadata as Record<string, unknown> | null) ?? null,
+        createdAt: String(row.created_at ?? ""),
+      };
+    });
+    const total =
+      rows.length > 0 ? Number((rows[0] as Record<string, unknown>).total_count ?? 0) : 0;
+    return { items, total };
   }
 
   // ── Aggregate stats ────────────────────────────────────────────────

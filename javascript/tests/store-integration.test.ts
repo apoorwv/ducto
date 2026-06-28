@@ -646,4 +646,31 @@ describe.runIf(DATABASE_URL)("PostgresStore integration", () => {
     const daily = await store.dailySpend(empty, emptyEnd);
     expect(daily).toHaveLength(0);
   });
+
+  // ── listUserTransactions ───────────────────────────────────────────
+
+  it("listUserTransactions returns paginated transactions through PostgresStore", async () => {
+    const store = new PostgresStore(DATABASE_URL!, pg.Pool);
+    await pool.query("DELETE FROM public.credit_transactions WHERE user_id = $1", [PG_USER]);
+    await store.addCredits(PG_USER, 1000, "purchase", { ref: "purchase-1" });
+    await store.addCredits(PG_USER, 500, "signup_bonus", { ref: "bonus-1" });
+    const r1 = await store.reserveCredits(PG_USER, 200, "usage", { model: "gpt-4" });
+    await store.deductCredits(PG_USER, r1.reservationId, 200, null, { model: "gpt-4" });
+    await store.addCredits(PG_USER2, 999, "purchase");
+    const result = await store.listUserTransactions(PG_USER);
+    expect(result.total).toBe(3);
+    expect(result.items).toHaveLength(3);
+    expect(result.items.filter((t) => t.type === "usage")).toHaveLength(1);
+    const typeFiltered = await store.listUserTransactions(PG_USER, { types: ["purchase"] });
+    expect(typeFiltered.total).toBe(1);
+    const page1 = await store.listUserTransactions(PG_USER, { limit: 1, offset: 0 });
+    expect(page1.items).toHaveLength(1);
+    expect(page1.total).toBe(3);
+    const page2 = await store.listUserTransactions(PG_USER, { limit: 2, offset: 1 });
+    expect(page2.items).toHaveLength(2);
+    expect(page2.total).toBe(3);
+    const noUser = await store.listUserTransactions(PG_USER2, { types: ["usage"] });
+    expect(noUser.total).toBe(0);
+    await pool.query("DELETE FROM public.credit_transactions WHERE user_id = $1", [PG_USER]);
+  });
 });

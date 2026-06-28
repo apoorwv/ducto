@@ -307,7 +307,7 @@ wheels = [
 
 [[package]]
 name = "ducto"
-version = "1.0.2"
+version = "1.0.3"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
@@ -333,6 +333,7 @@ test = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "httpx" },
     { name = "ipykernel" },
     { name = "nbconvert" },
     { name = "nbformat" },
@@ -359,6 +360,7 @@ provides-extras = ["supabase", "postgres", "test"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "ipykernel", specifier = ">=7.3.0" },
     { name = "nbconvert", specifier = ">=7.17.1" },
     { name = "nbformat", specifier = ">=5.10.4" },

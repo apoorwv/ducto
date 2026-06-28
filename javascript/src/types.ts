@@ -127,6 +127,42 @@ export interface SweepResult {
   dryRun: boolean;
 }
 
+// ── Transaction listing ──────────────────────────────────────────────
+/** A single credit transaction row. */
+export interface UserTransactionRow {
+  id: string;
+  userId: string;
+  amount: number;
+  type: string;
+  referenceType: string | null;
+  referenceId: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+/** Options for listing user transactions. */
+export interface ListTransactionsOptions {
+  types?: string[];
+  fromDate?: Date;
+  toDate?: Date;
+  limit?: number;
+  offset?: number;
+}
+
+/** Paginated result of listing user transactions. */
+export interface PaginatedTransactions {
+  items: UserTransactionRow[];
+  total: number;
+}
+
+/** Options for listing usage events. */
+export interface ListUsageEventsOptions {
+  fromDate?: Date;
+  toDate?: Date;
+  limit?: number;
+  offset?: number;
+}
+
 // ── Usage analytics ─────────────────────────────────────────────────
 /** Aggregated spend for a single user in a time window. */
 export interface SpendByUserRow {

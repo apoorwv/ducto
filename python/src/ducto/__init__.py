@@ -36,6 +36,7 @@ from ducto.interface.models import (
     TeamDeductionResult,
     TeamMember,
     TopUserRow,
+    TransactionRow,
 )
 from ducto.manager import CreditManager, InsufficientCreditsError, PricingNotLoadedError
 from ducto.metrics import ToolCall, UsageMetrics
@@ -80,6 +81,7 @@ __all__ = [
     "TeamMember",
     "ToolCall",
     "TopUserRow",
+    "TransactionRow",
     "UsageMetrics",
     "evaluate_expression",
     "validate_expression",

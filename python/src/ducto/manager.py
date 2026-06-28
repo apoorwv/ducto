@@ -52,6 +52,7 @@ from ducto.interface.models import (
     SweepResult,
     TeamDeductionResult,
     TopUserRow,
+    TransactionRow,
 )
 from ducto.metrics import UsageMetrics
 
@@ -499,6 +500,18 @@ class CreditManager:
     def daily_spend(self, start: datetime, end: datetime) -> list[DailySpendRow]:
         """Daily spend aggregation in a time window."""
         return self._store.daily_spend(start, end)
+
+    def list_user_transactions(
+        self,
+        user_id: str,
+        types: list[str] | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[TransactionRow]:
+        """List credit transactions for a user with pagination."""
+        return self._store.list_user_transactions(user_id, types, from_date, to_date, limit, offset)
 
     def aggregate_stats(self, start: datetime, end: datetime) -> AggregateStatsRow:
         """Aggregate statistics across all users in a time window."""

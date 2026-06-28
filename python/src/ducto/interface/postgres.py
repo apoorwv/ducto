@@ -38,6 +38,7 @@ from ducto.interface.models import (
     TeamDeductionResult,
     TeamMember,
     TopUserRow,
+    TransactionRow,
 )
 from ducto.sql import _get_sql_files
 
@@ -572,6 +573,50 @@ class PostgresStore(CreditStore):
             top_model=str(d.get("top_model", "")),
             top_user=str(d.get("top_user", "")),
         )
+
+    # ── Transaction listing ─────────────────────────────────────────────────
+
+    def list_user_transactions(
+        self,
+        user_id: str,
+        types: list[str] | None = None,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[TransactionRow]:
+        conn = self._conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT * FROM list_user_transactions(%s, %s, %s, %s, %s, %s)",
+                    [
+                        user_id,
+                        types,
+                        from_date.isoformat() if from_date else None,
+                        to_date.isoformat() if to_date else None,
+                        limit,
+                        offset,
+                    ],
+                )
+                rows = cur.fetchall()
+            conn.commit()
+        finally:
+            conn.close()
+        return [
+            TransactionRow(
+                id=str(r[0]),
+                user_id=str(r[1]),
+                amount=int(r[2]),
+                type=str(r[3]),
+                reference_type=str(r[4]) if r[4] else None,
+                reference_id=str(r[5]) if r[5] else None,
+                metadata=r[6] if isinstance(r[6], dict) else {},
+                created_at=str(r[7]),
+                total_count=int(r[8]),
+            )
+            for r in (rows or [])
+        ]
 
     # ── Team/shared balance pools ─────────────────────────────────────────
 
