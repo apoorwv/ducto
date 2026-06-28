@@ -6,5 +6,6 @@ __pycache__/
 .env
 dist/
 /build/
+python/build/
 *.egg-info/
 .claude/
