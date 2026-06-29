@@ -16,6 +16,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime
@@ -66,38 +67,53 @@ class CreditEventEmitter:
 
     Handlers are registered by event type string and called synchronously
     when the event is emitted. No-op when no handlers are registered.
+
+    Thread-safety: ``_lock`` (a ``threading.RLock``) guards all mutations to
+    ``_listeners``.  The emit loop copies the handler list under the lock then
+    calls each handler *outside* the lock so a handler that calls ``on()`` or
+    ``off()`` during dispatch cannot deadlock.
     """
 
     def __init__(self) -> None:
+        self._lock = threading.RLock()
         self._listeners: dict[CreditEventType, list[EventHandler]] = {}
 
     def on(self, event_type: CreditEventType, handler: EventHandler) -> None:
         """Register a handler for a specific event type."""
-        if event_type not in self._listeners:
-            self._listeners[event_type] = []
-        self._listeners[event_type].append(handler)
+        with self._lock:
+            if event_type not in self._listeners:
+                self._listeners[event_type] = []
+            self._listeners[event_type].append(handler)
 
     def off(self, event_type: CreditEventType, handler: EventHandler) -> None:
         """Remove a previously registered handler."""
-        handlers = self._listeners.get(event_type)
-        if handlers:
-            with suppress(ValueError):
-                handlers.remove(handler)
+        with self._lock:
+            handlers = self._listeners.get(event_type)
+            if handlers:
+                with suppress(ValueError):
+                    handlers.remove(handler)
 
     def emit(self, event: CreditEvent) -> None:
-        """Emit an event to all registered handlers."""
-        handlers = self._listeners.get(event.type)
-        if handlers:
-            for handler in handlers:
-                try:
-                    handler(event)
-                except Exception:
-                    logger.exception("Credit event handler failed for event %s", event.type)
+        """Emit an event to all registered handlers.
+
+        The handler list is snapshot-copied under the lock so that handlers
+        can safely call ``on()``/``off()`` without risk of deadlock or
+        iterator corruption.
+        """
+        with self._lock:
+            handlers = list(self._listeners.get(event.type) or [])
+        for handler in handlers:
+            try:
+                handler(event)
+            except Exception:
+                logger.exception("Credit event handler failed for event %s", event.type)
 
     def clear_type(self, event_type: CreditEventType) -> None:
         """Remove all handlers for a specific type."""
-        self._listeners.pop(event_type, None)
+        with self._lock:
+            self._listeners.pop(event_type, None)
 
     def clear_all(self) -> None:
         """Remove all handlers for all types."""
-        self._listeners.clear()
+        with self._lock:
+            self._listeners.clear()

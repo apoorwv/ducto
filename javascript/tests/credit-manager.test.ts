@@ -1037,6 +1037,173 @@ describe("CreditManager", () => {
     });
   });
 
+  // H2 — Concurrent deduct + refund race
+  describe("H2: concurrent deduct and refund do not corrupt balance", () => {
+    it("10 concurrent deductions of 1 + 5 concurrent refunds — balance stays ≥ 0", async () => {
+      await manager.publishPricingFromDict({ models: { _default: "input_tokens * 1" } });
+      await manager.addCredits("user-1", 20);
+
+      // Run 10 deductions (each costs 1) and collect their transaction IDs.
+      // MemoryStore is synchronous so all Promise.all tasks run atomically.
+      const deductPromises = Array.from({ length: 10 }, () =>
+        manager.deduct("user-1", { inputTokens: 1 }),
+      );
+
+      // We don't have transaction IDs yet, so launch refunds of 5 of the deductions
+      // after the deductions settle (Promise.all resolves left-to-right in order).
+      const deductResults = await Promise.all(deductPromises);
+
+      // All deductions must have succeeded or have a typed error — none should throw.
+      for (const r of deductResults) {
+        expect(r.transactionId).toBeDefined();
+      }
+
+      // Refund first 5 deductions concurrently.
+      const refundPromises = deductResults.slice(0, 5).map((r) =>
+        manager.refundCredits(r.transactionId).catch((err: unknown) => {
+          // A typed RefundError is acceptable (e.g. already_refunded) — untyped is not.
+          expect(err).toBeInstanceOf(Error);
+          return null;
+        }),
+      );
+      await Promise.all(refundPromises);
+
+      const { balance } = await manager.getBalance("user-1");
+      expect(balance.gte(0)).toBe(true);
+    });
+  });
+
+  // H3 — Plan change + deduction consistency
+  describe("H3: plan change + deduction consistency", () => {
+    it("concurrent plan change and deduction do not throw and leave a non-negative balance", async () => {
+      const planConfig = {
+        models: { _default: "input_tokens * 1" },
+        plans: {
+          "plan-a": { id: "plan-a", name: "Plan A", freeAllowance: new Decimal(50) },
+          "plan-b": { id: "plan-b", name: "Plan B", freeAllowance: new Decimal(20) },
+        },
+      };
+      await manager.publishPricingFromDict(planConfig);
+      await store.setActivePricing(planConfig);
+      await store.setUserPlan("user-1", "plan-a");
+      await manager.addCredits("user-1", 100);
+
+      // Run a plan change and a deduction concurrently.
+      const [, deductResult] = await Promise.all([
+        manager.setUserPlan("user-1", "plan-b"),
+        manager.deduct("user-1", { inputTokens: 10 }),
+      ]);
+
+      // No exception thrown; deduction must have completed.
+      expect(deductResult.transactionId).toBeDefined();
+
+      const { balance } = await manager.getBalance("user-1");
+      expect(balance.gte(0)).toBe(true);
+    });
+  });
+
+  // H15 — listUserTransactions passthrough
+  describe("H15: listUserTransactions passthrough", () => {
+    it("returns paginated transactions with correct types and honours limit", async () => {
+      await manager.publishPricingFromDict({ models: { _default: "input_tokens * 1" } });
+      await manager.addCredits("user-1", 500);
+
+      // Create 5 usage transactions.
+      for (let i = 0; i < 5; i++) {
+        await manager.deduct("user-1", { inputTokens: 1 });
+      }
+
+      const page = await manager.listUserTransactions("user-1", { limit: 3, types: ["usage"] });
+
+      // Paging: asked for 3, total is 5.
+      expect(page.items).toHaveLength(3);
+      expect(page.total).toBe(5);
+
+      // Every item has the correct shape.
+      for (const item of page.items) {
+        expect(item.userId).toBe("user-1");
+        expect(item.type).toBe("usage");
+        expect(item.id).toBeTruthy();
+        expect(typeof item.createdAt).toBe("string");
+      }
+    });
+
+    it("returns all transaction types (usage + adjustment) when no type filter given", async () => {
+      await manager.publishPricingFromDict({ models: { _default: "input_tokens * 1" } });
+      await manager.addCredits("user-1", 100); // type=adjustment
+      await manager.deduct("user-1", { inputTokens: 5 }); // type=usage
+
+      const page = await manager.listUserTransactions("user-1");
+      expect(page.total).toBeGreaterThanOrEqual(2);
+      const types = new Set(page.items.map((i) => i.type));
+      expect(types.has("usage")).toBe(true);
+      expect(types.has("adjustment")).toBe(true);
+    });
+  });
+
+  // M15 — Low-balance threshold default (minBalance * 2)
+  describe("M15: low_balance threshold defaults to minBalance * 2", () => {
+    it("fires when balance crosses minBalance*2 from above (minBalance=5 → threshold=10)", async () => {
+      // No explicit lowBalanceThreshold — must default to minBalance*2 = 10.
+      const emitter = new CreditEventEmitter();
+      const mgr = new CreditManager(store, undefined, emitter);
+
+      // Use a pricing config with minBalance=5 (the default engine value).
+      await mgr.publishPricingFromDict({ models: { _default: "input_tokens * 1" } });
+      // Start at 12 so a single deduction of 3 crosses 10 from above.
+      await mgr.addCredits("user-1", 12);
+
+      const lowBalanceEvents: CreditEvent[] = [];
+      emitter.on("credits.low_balance", (e) => lowBalanceEvents.push(e));
+
+      // 12 → 9: crosses threshold 10.
+      await mgr.deduct("user-1", { inputTokens: 3 });
+      expect(lowBalanceEvents).toHaveLength(1);
+      expect((lowBalanceEvents[0].data?.threshold as { toString(): string }).toString()).toBe("10");
+
+      // 9 → 7: already below threshold → edge-triggered, must NOT fire again.
+      await mgr.deduct("user-1", { inputTokens: 2 });
+      expect(lowBalanceEvents).toHaveLength(1);
+    });
+  });
+
+  // M9 — Idempotency key isolation: personal vs team
+  describe("M9: idempotency key scoped independently to personal vs team", () => {
+    it("same key 'key-1' for personal deduct AND team deduct are both charged (no collision)", async () => {
+      await manager.publishPricingFromDict({ models: { _default: "input_tokens * 1" } });
+      await manager.addCredits("user-1", 200);
+
+      const team = await store.createTeam("Team X", new Decimal(500));
+      await store.addTeamMember(team.teamId, "user-1", "member");
+
+      const SHARED_KEY = "key-1";
+
+      // Personal deduction with key-1.
+      const personalResult = await manager.deduct(
+        "user-1",
+        { inputTokens: 10 },
+        SHARED_KEY,
+      );
+      expect(personalResult.idempotent).toBe(false);
+      expectDecimal(personalResult.amount, "10");
+
+      // Team deduction with the SAME key-1 — must NOT be treated as a replay.
+      const teamResult = await manager.deductTeam(
+        team.teamId,
+        "user-1",
+        { inputTokens: 20 },
+        SHARED_KEY,
+      );
+      // Team store idempotency is keyed on (teamId + idempotencyKey), separate from user.
+      expect(teamResult.error).toBeFalsy();
+      expectDecimal(teamResult.amount, "-20");
+
+      // Personal balance was only charged 10 (personal key), team was charged 20.
+      expectDecimal((await manager.getBalance("user-1")).balance, "190");
+      expectDecimal((await store.getTeamBalance(team.teamId)).balance, "480");
+    });
+  });
+
   // MG5 — Full lifecycle test
   describe("MG5: full lifecycle end-to-end with MemoryStore", () => {
     it("add → deduct (allowance) → deduct (balance) → refund → sweep → aggregateStats", async () => {

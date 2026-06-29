@@ -32,11 +32,23 @@
     {"name": "if_wrong_arity", "expr": "if(input_tokens > 0, 5)", "vars": {"input_tokens": 1}, "expect_error": true},
     {"name": "tier_odd_arity", "expr": "tier(input_tokens, 100, 1, 500, 2)", "vars": {"input_tokens": 50}, "expect_error": true},
     {"name": "tier_too_few_args", "expr": "tier(input_tokens, 100)", "vars": {"input_tokens": 50}, "expect_error": true},
-    {"name": "percentile_out_of_range", "expr": "percentile(150, 1, 2, 3)", "vars": {}, "expect_error": true}
+    {"name": "percentile_out_of_range", "expr": "percentile(150, 1, 2, 3)", "vars": {}, "expect_error": true},
+
+    {"name": "nested_max_ceil", "expr": "max(ceil(input_tokens * 0.001), 1)", "vars": {"input_tokens": 500}, "expected": "1.0000"},
+    {"name": "nested_clamp_round", "expr": "clamp(round(input_tokens * 0.0025), 0, 5)", "vars": {"input_tokens": 1000}, "expected": "3.0000"},
+    {"name": "quantize_underflow", "expr": "input_tokens * 0.00001", "vars": {"input_tokens": 1}, "expected": "0.0000"},
+    {"name": "quantize_half_up", "expr": "input_tokens * 0.000050", "vars": {"input_tokens": 1}, "expected": "0.0001"}
   ],
   "pricing_cases": [
     {"name": "default_model", "config": {"version": 1, "models": {"_default": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)"}}, "metrics": {"model": "gpt-4", "input_tokens": 500, "output_tokens": 200}, "expected_total": "0.0110"},
     {"name": "fractional_total", "config": {"version": 1, "models": {"_default": "input_tokens * 0.001"}}, "metrics": {"model": "gpt-4", "input_tokens": 1500}, "expected_total": "1.5000"},
-    {"name": "per_model_override", "config": {"version": 1, "models": {"gpt-4": "input_tokens * 0.002", "_default": "input_tokens * 0.001"}}, "metrics": {"model": "gpt-4", "input_tokens": 1000}, "expected_total": "2.0000"}
+    {"name": "per_model_override", "config": {"version": 1, "models": {"gpt-4": "input_tokens * 0.002", "_default": "input_tokens * 0.001"}}, "metrics": {"model": "gpt-4", "input_tokens": 1000}, "expected_total": "2.0000"},
+    {"name": "tools_only", "config": {"version": 1, "models": {"_default": "input_tokens * 0"}, "tools": {"_default": "tool_calls * 0.01"}}, "metrics": {"model": "gpt-4", "tool_calls": [{"name": "t1"}, {"name": "t2"}, {"name": "t3"}, {"name": "t4"}, {"name": "t5"}]}, "expected_total": "0.0500"},
+    {"name": "tools_with_model", "config": {"version": 1, "models": {"_default": "input_tokens * 0.001"}, "tools": {"_default": "tool_calls * 0.05"}}, "metrics": {"model": "gpt-4", "input_tokens": 1000, "tool_calls": [{"name": "t1"}, {"name": "t2"}]}, "expected_total": "1.1000"},
+    {"name": "cache_discount", "config": {"version": 1, "models": {"_default": "input_tokens * 0.002"}, "cache": {"discount": "0 - cache_read_tokens * 0.0002"}}, "metrics": {"model": "gpt-4", "input_tokens": 1000, "cache_read_tokens": 500}, "expected_total": "1.9000"},
+    {"name": "cache_discount_exceeds_cost", "config": {"version": 1, "models": {"_default": "input_tokens * 0.001"}, "cache": {"discount": "0 - cache_read_tokens * 0.01"}}, "metrics": {"model": "gpt-4", "input_tokens": 100, "cache_read_tokens": 100}, "expected_total": "0.0000"},
+    {"name": "search_costs", "config": {"version": 1, "models": {"_default": "input_tokens * 0"}, "search": {"costs": "search_queries * 0.1"}}, "metrics": {"model": "gpt-4", "search_queries": 3}, "expected_total": "0.3000"},
+    {"name": "fixed_cost", "config": {"version": 1, "models": {"_default": "input_tokens * 0"}, "fixed": {"analysis_job": 5}}, "metrics": {"model": "gpt-4", "fixed_job": "analysis_job"}, "expected_total": "5.0000"},
+    {"name": "model_plus_tools_plus_search", "config": {"version": 1, "models": {"_default": "input_tokens * 0.001"}, "tools": {"_default": "tool_calls * 0.05"}, "search": {"costs": "search_queries * 0.1"}}, "metrics": {"model": "gpt-4", "input_tokens": 2000, "tool_calls": [{"name": "t1"}, {"name": "t2"}, {"name": "t3"}], "search_queries": 2}, "expected_total": "2.3500"}
   ]
 }

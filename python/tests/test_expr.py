@@ -576,3 +576,114 @@ class TestExpressionNoVariables:
         # The engine requires at least one metric variable in every expression.
         with pytest.raises(ExpressionError, match="no variables"):
             evaluate_expression("1 + 2", {"x": 1})
+
+
+# ── E9: Nested function calls ────────────────────────────────────────────────
+
+
+class TestNestedFunctionCalls:
+    """E9 — functions nested inside other function arguments evaluate correctly."""
+
+    def test_max_of_ceil(self) -> None:
+        # ceil(500 * 0.001) = ceil(0.5) = 1; max(1, 1) = 1
+        result = evaluate_expression(
+            "max(ceil(input_tokens * 0.001), 1)", {"input_tokens": 500}
+        )
+        assert _q(result) == Decimal("1.0000")
+
+    def test_clamp_of_round(self) -> None:
+        # round(1000 * 0.0025) = round(2.5) = 3 (ROUND_HALF_UP); clamp(3, 0, 5) = 3
+        result = evaluate_expression(
+            "clamp(round(input_tokens * 0.0025), 0, 5)", {"input_tokens": 1000}
+        )
+        assert _q(result) == Decimal("3.0000")
+
+    def test_if_with_nested_ceil_and_floor(self) -> None:
+        # input_tokens=200 > 100 is True -> ceil(200 * 0.001) = ceil(0.2) = 1
+        result = evaluate_expression(
+            "if(input_tokens > 100, ceil(input_tokens * 0.001), floor(input_tokens * 0 + 0.5))",
+            {"input_tokens": 200},
+        )
+        assert _q(result) == Decimal("1.0000")
+
+
+# ── E10: Decimal quantization boundary ──────────────────────────────────────
+
+
+class TestDecimalQuantizationBoundary:
+    """E10 — values near the 4dp boundary quantize with ROUND_HALF_UP."""
+
+    def test_below_half_ulp_rounds_to_zero(self) -> None:
+        # a * 0.00001 = 0.00001; 4dp quantize rounds down to 0.0000
+        result = evaluate_expression("a * 0.00001", {"a": 1})
+        assert str(_q(result)) == "0.0000"
+
+    def test_exactly_half_ulp_rounds_up(self) -> None:
+        # a * 0.000050 = 0.000050; exactly half a 4dp unit -> ROUND_HALF_UP -> 0.0001
+        result = evaluate_expression("a * 0.000050", {"a": 1})
+        assert str(_q(result)) == "0.0001"
+
+    def test_just_below_half_ulp_rounds_down(self) -> None:
+        # a * 0.000049 = 0.000049 < 0.00005 -> rounds down to 0.0000
+        result = evaluate_expression("a * 0.000049", {"a": 1})
+        assert str(_q(result)) == "0.0000"
+
+
+# ── E11: Parity pricing_cases via PricingEngine ──────────────────────────────
+
+
+_PRICING_CASES_FOR_EXPR = _PARITY["pricing_cases"]
+
+
+@pytest.mark.parametrize(
+    "case", _PRICING_CASES_FOR_EXPR, ids=[c["name"] for c in _PRICING_CASES_FOR_EXPR]
+)
+def test_parity_pricing_cases_via_engine(case: dict) -> None:
+    """E11 — every pricing_cases entry in the parity fixture passes through
+    PricingEngine.from_dict() and produces the expected total (byte-identical string)."""
+    from ducto.engine import PricingEngine
+    from ducto.metrics import UsageMetrics
+
+    engine = PricingEngine.from_dict(case["config"])
+    breakdown = engine.calculate(UsageMetrics(**case["metrics"]))
+    assert str(breakdown.total) == case["expected_total"]
+
+
+# ── E12: Concurrent eval isolation ──────────────────────────────────────────
+
+
+class TestConcurrentEvalIsolation:
+    """E12 — concurrent evaluate_expression calls on different threads produce
+    correct results and do not bleed Decimal context state."""
+
+    def test_20_threads_no_state_bleed(self) -> None:
+        import threading
+
+        NUM_THREADS = 20
+        results: dict[int, Decimal] = {}
+        errors: list[tuple[int, Exception]] = []
+
+        def worker(tid: int) -> None:
+            try:
+                # Each thread uses a distinct multiplier to detect cross-thread bleed.
+                result = evaluate_expression(
+                    "input_tokens * 0.001", {"input_tokens": tid * 100}
+                )
+                results[tid] = _q(result)
+            except Exception as exc:  # noqa: BLE001
+                errors.append((tid, exc))
+
+        threads = [
+            threading.Thread(target=worker, args=(i,)) for i in range(1, NUM_THREADS + 1)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"threads raised errors: {errors}"
+        for tid in range(1, NUM_THREADS + 1):
+            expected = _q(Decimal(tid * 100) * Decimal("0.001"))
+            assert results[tid] == expected, (
+                f"thread {tid}: got {results[tid]}, expected {expected}"
+            )

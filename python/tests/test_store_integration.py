@@ -867,6 +867,144 @@ class TestPostgresStoreIntegration:
         assert isinstance(stats.total_credits_consumed, Decimal)
         assert stats.total_credits_consumed == Decimal("0.45")
 
+    # ── H4 — RPC atomicity: cap-fail must NOT consume allowance ──────────
+
+    def test_deduct_with_allowance_cap_deny_does_not_consume_allowance(
+        self, store: PostgresStore
+    ) -> None:
+        """H4 — deny cap aborts without consuming any allowance (all-or-nothing).
+
+        Setup: balance=20, monthly allowance=10, deny cap at 8.
+        Attempt deduct(9): allowance covers 9, net=0 but wait — the cap is
+        checked against the NET amount after allowance, so net=9-9=0… Actually
+        let's use amount=9 with allowance=10 → net=0 always passes.
+
+        Use a scenario where net DOES exceed the cap:
+        allowance=10, balance=20, deny cap=8, amount=15.
+        Gross=15, allowance covers 10, net=5 → 0+5 > 8? No, 5 < 8 → passes.
+
+        Correct scenario: allowance=10, cap=8, amount=20.
+        Gross=20, allowance covers 10, net=10 → 0+10 > 8 → denied.
+        After failure: allowance_remaining must still be 10.
+        Then deduct(5): allowance covers 5, net=0 → balance unchanged, allowance=5.
+        """
+        store.set_active_pricing(
+            PricingConfigData(
+                models={"_default": "1"},
+                plans={
+                    "basic": PlanDefinition(
+                        id="basic",
+                        name="Basic",
+                        free_allowance=Decimal("10"),
+                    )
+                },
+            )
+        )
+        store.set_user_plan(_PG_USER, "basic")
+        store.add_credits(_PG_USER, Decimal("20"), "purchase")
+
+        # Insert deny cap at 8 (net spend must not exceed 8)
+        conn = psycopg2.connect(store._database_url)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO public.credit_spend_caps (user_id, cap_type, cap_limit, action) "
+                    "VALUES (%s, 'monthly', 8, 'deny')",
+                    [_PG_USER],
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        before = store.check_allowance(_PG_USER)
+        assert before.allowance_remaining == Decimal("10")
+
+        # Attempt: gross=20, allowance covers 10, net=10 → 0+10 > 8 → cap_reached
+        result = store.deduct_with_allowance(_PG_USER, Decimal("20"))
+        assert result.error == "cap_reached"
+
+        # Allowance must be untouched after the failed attempt
+        after_fail = store.check_allowance(_PG_USER)
+        assert after_fail.allowance_remaining == Decimal("10"), (
+            f"Allowance leaked on cap-deny: expected 10, got {after_fail.allowance_remaining}"
+        )
+
+        # A successful deduct(5): allowance covers 5, net=0, balance unchanged
+        ok = store.deduct_with_allowance(_PG_USER, Decimal("5"), idempotency_key="h4_ok")
+        assert ok.error is None
+        assert ok.allowance_consumed == Decimal("5")
+
+        after_ok = store.check_allowance(_PG_USER)
+        assert after_ok.allowance_remaining == Decimal("5")
+        assert store.get_balance(_PG_USER).balance == Decimal("20")
+
+    # ── H5 — Connection survives exception ───────────────────────────────
+
+    def test_postgres_store_recovers_after_error(self, store: PostgresStore) -> None:
+        """H5 — store remains usable after a call that causes an error.
+
+        PostgresStore opens a fresh connection per call (no persistent connection
+        pool), so an error in one call cannot poison future calls. This test
+        verifies that contract.
+        """
+        # Add some credits so the store has state
+        store.add_credits(_PG_USER, Decimal("100"), "purchase")
+
+        # Attempt a deduction with an invalid (negative) amount.
+        # The store returns an error result rather than raising for business
+        # errors; negative amounts return error="invalid_amount".
+        bad = store.deduct_with_allowance(_PG_USER, Decimal("-1"))
+        assert bad.error is not None  # some error code (invalid_amount or similar)
+
+        # The connection must still be usable: a normal get_balance succeeds
+        balance = store.get_balance(_PG_USER)
+        assert balance.balance == Decimal("100"), (
+            f"Connection broken after error: balance={balance.balance}"
+        )
+
+        # And a normal deduction also works
+        ok = store.deduct_with_allowance(_PG_USER, Decimal("10"), idempotency_key="h5_ok")
+        assert ok.error is None
+        assert store.get_balance(_PG_USER).balance == Decimal("90")
+
+    # ── H6 — Decimal round-trip precision ────────────────────────────────
+
+    def test_decimal_round_trip_precision(self, store: PostgresStore) -> None:
+        """H6 — sub-cent amounts survive a Postgres round-trip without float drift."""
+        # Start fresh balance for this user
+        store.add_credits(_PG_USER, Decimal("0.0001"), "purchase")
+        b1 = store.get_balance(_PG_USER).balance
+        assert isinstance(b1, Decimal)
+        assert b1 == Decimal("0.0001"), f"Expected 0.0001, got {b1!r}"
+
+        store.add_credits(_PG_USER, Decimal("0.1234"), "purchase")
+        b2 = store.get_balance(_PG_USER).balance
+        assert isinstance(b2, Decimal)
+        assert b2 == Decimal("0.1235"), f"Expected 0.1235, got {b2!r}"
+
+        # Deduct the tiny amount back
+        d = store.deduct_with_allowance(_PG_USER, Decimal("0.0001"), idempotency_key="h6_deduct")
+        assert d.error is None
+        b3 = store.get_balance(_PG_USER).balance
+        assert isinstance(b3, Decimal)
+        assert b3 == Decimal("0.1234"), f"Expected 0.1234, got {b3!r}"
+
+    # ── H7 — Migration idempotency ───────────────────────────────────────
+
+    def test_migration_idempotent(self, pg_database_url: str) -> None:
+        """H7 — running setup() twice raises no exception and leaves DB usable."""
+        store = PostgresStore(pg_database_url)
+
+        r1 = store.setup()
+        assert r1.success, f"First setup() failed: {r1.errors}"
+
+        r2 = store.setup()
+        assert r2.success, f"Second setup() failed: {r2.errors}"
+
+        # Basic operations still work after double migration
+        store.add_credits(_PG_USER, Decimal("50"), "purchase")
+        assert store.get_balance(_PG_USER).balance >= Decimal("50")
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # HttpxSupabaseStore — HTTP contract tests (mocked httpx)

@@ -271,3 +271,82 @@ class TestConfigValidation:
         )
         assert config.min_balance == Decimal("10")
         assert isinstance(config.min_balance, Decimal)
+
+    # ── CF8: Empty plans dict ──────────────────────────────────────────────
+
+    def test_empty_plans_dict_is_valid(self) -> None:
+        """CF8 — plans: {} (empty dict) is a valid config, not an error."""
+        config = load_config_from_dict(
+            {
+                "version": 1,
+                "models": {"_default": "input_tokens * 0"},
+                "plans": {},
+            }
+        )
+        assert config.plans == {}
+
+    # ── CF9: Version edge cases ────────────────────────────────────────────
+
+    def test_version_zero_rejected(self) -> None:
+        """CF9a — version: 0 must be rejected (only Literal[1] is valid)."""
+        with pytest.raises(ValidationError):
+            load_config_from_dict(
+                {"version": 0, "models": {"_default": "input_tokens * 1"}}
+            )
+
+    def test_version_two_rejected(self) -> None:
+        """CF9b — version: 2 must be rejected."""
+        with pytest.raises(ValidationError):
+            load_config_from_dict(
+                {"version": 2, "models": {"_default": "input_tokens * 1"}}
+            )
+
+    def test_version_string_one_rejected(self) -> None:
+        """CF9c — version: '1' (string) must be rejected; Literal[1] is int-only."""
+        with pytest.raises(ValidationError):
+            load_config_from_dict(
+                {"version": "1", "models": {"_default": "input_tokens * 1"}}
+            )
+
+    def test_version_none_rejected(self) -> None:
+        """CF9d — version: null must be rejected."""
+        with pytest.raises(ValidationError):
+            load_config_from_dict(
+                {"version": None, "models": {"_default": "input_tokens * 1"}}
+            )
+
+    # ── CF10: Variable name collision with builtins ────────────────────────
+
+    def test_builtin_name_as_metric_variable_rejected_at_config_load(self) -> None:
+        """CF10 — 'ceil' is not a metric variable; using it as one in an expression
+        is rejected at config-load time because 'ceil' is not in METRIC_VARIABLES.
+
+        Specifically: 'ceil' is treated as a function reference in _SAFE_NAMES,
+        so the expression 'ceil * 0.001' has no user-supplied variable references
+        and triggers the 'expression references no variables' guard.
+        """
+        with pytest.raises(ConfigError, match="invalid expression"):
+            load_config_from_dict({"models": {"_default": "ceil * 0.001"}})
+
+    def test_builtin_name_in_call_position_uses_builtin_not_variable(self) -> None:
+        """CF10b — 'ceil' in call position always invokes the builtin function.
+
+        When 'ceil(input_tokens * 0.5)' appears in a config expression, the AST
+        evaluator resolves 'ceil' to the safe builtin _ceil function, never to
+        any hypothetical variable named 'ceil'.  This confirms the function
+        namespace is isolated and cannot be shadowed by metric variables.
+        """
+        # This must load and evaluate cleanly.
+        config = load_config_from_dict(
+            {"models": {"_default": "ceil(input_tokens * 0.5)"}}
+        )
+        assert "ceil" in config.models["_default"]
+
+        # Verify at evaluation time the builtin is used correctly.
+        from ducto.engine import PricingEngine
+        from ducto.metrics import UsageMetrics
+
+        engine = PricingEngine.from_dict({"models": {"_default": "ceil(input_tokens * 0.5)"}})
+        result = engine.calculate(UsageMetrics(model="_default", input_tokens=11))
+        # ceil(11 * 0.5) = ceil(5.5) = 6
+        assert result.total == Decimal("6.0000")

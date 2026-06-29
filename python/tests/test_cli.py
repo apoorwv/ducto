@@ -492,3 +492,79 @@ class TestMigrateNoUrl:
         # covers this case. We verify the same behaviour here for CLI2 completeness.
         monkeypatch.delenv("DATABASE_URL", raising=False)
         assert _exit_code("migrate") == 1
+
+
+class TestValidateThenUseEngine:
+    """M17 — CLI validate then programmatic PricingEngine usage."""
+
+    def test_validate_then_use_engine(self, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+        """Write a pricing config, validate it via CLI, then load into PricingEngine
+        and verify that calculate() produces the expected cost.
+        """
+        import json
+        from decimal import Decimal
+
+        config_data = {
+            "models": {
+                "_default": "input_tokens * 2 + output_tokens * 4",
+            },
+            "min_balance": 0,
+        }
+        p = tmp_path / "pricing.json"
+        p.write_text(json.dumps(config_data))
+
+        # Step 1: CLI validate must succeed (exit 0, print "valid").
+        _run("pricing", "validate", str(p))
+        out = capsys.readouterr().out
+        assert "valid" in out.lower()
+
+        # Step 2: Load the same config into a PricingEngine and calculate a cost.
+        from ducto.engine import PricingEngine
+        from ducto import UsageMetrics
+
+        engine = PricingEngine.from_dict(config_data)
+        result = engine.calculate(UsageMetrics(input_tokens=10, output_tokens=5))
+        # 10*2 + 5*4 = 20 + 20 = 40
+        assert result.total == Decimal("40"), f"Unexpected total: {result.total}"
+
+
+class TestMigrateInvalidUrlFailsGracefully:
+    """Migration failure handling — invalid DATABASE_URL exits non-zero without traceback."""
+
+    def test_migrate_invalid_url_fails_gracefully(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        """An invalid / unresolvable DATABASE_URL must exit 1 with a meaningful
+        message — not dump a raw Python traceback to stderr.
+
+        Strategy: patch psycopg2 import to fail so _require_extra exits 1
+        immediately before any connection attempt. This guarantees a clean,
+        fast, dependency-free test.
+        """
+        import builtins
+
+        monkeypatch.setenv("DATABASE_URL", "postgresql://invalid:bad@localhost:0/no_such_db")
+
+        real_import = builtins.__import__
+
+        def _fake_import(name: str, *args: object, **kwargs: object) -> object:
+            if name == "psycopg2":
+                raise ImportError("psycopg2 not available (test stub)")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+        code = _exit_code("migrate")
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+
+        # Exit code must be non-zero.
+        assert code != 0, f"Expected non-zero exit, got {code}"
+
+        # The output must NOT contain a raw Python traceback.
+        assert "Traceback (most recent call last)" not in combined, (
+            "Unexpected traceback in output:\n" + combined
+        )
+
+        # There must be some human-readable message (not silence).
+        assert combined.strip() != "", "Expected a non-empty error message"

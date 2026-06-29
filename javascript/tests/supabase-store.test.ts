@@ -321,4 +321,185 @@ describe("HttpxSupabaseStore", () => {
       expect(meta.model).toBe("gpt-4");
     });
   });
+
+  // H13a — HTTP 500 responses → StoreError with meaningful message
+  describe("HTTP 500 responses → StoreError (H13a)", () => {
+    it("getBalance throws StoreError with status in message on HTTP 500", async () => {
+      mockFetch({ message: "Internal Server Error" }, 500);
+      const store = new HttpxSupabaseStore(URL_BASE, KEY);
+      await expect(store.getBalance("u1")).rejects.toThrow(StoreError);
+      await expect(store.getBalance("u1")).rejects.toThrow(/500/);
+    });
+
+    it("addCredits throws StoreError with status in message on HTTP 500", async () => {
+      mockFetch({ message: "Internal Server Error" }, 500);
+      const store = new HttpxSupabaseStore(URL_BASE, KEY);
+      await expect(store.addCredits("u1", D("10"))).rejects.toThrow(StoreError);
+      await expect(store.addCredits("u1", D("10"))).rejects.toThrow(/500/);
+    });
+
+    it("deductWithAllowance throws StoreError with status in message on HTTP 500", async () => {
+      mockFetch({ message: "Internal Server Error" }, 500);
+      const store = new HttpxSupabaseStore(URL_BASE, KEY);
+      await expect(store.deductWithAllowance("u1", D("5"))).rejects.toThrow(StoreError);
+      await expect(store.deductWithAllowance("u1", D("5"))).rejects.toThrow(/500/);
+    });
+
+    it("thrown error is a StoreError instance (not a plain Error) on HTTP 500", async () => {
+      mockFetch({ message: "Internal Server Error" }, 500);
+      const store = new HttpxSupabaseStore(URL_BASE, KEY);
+      let thrown: unknown;
+      try {
+        await store.getBalance("u1");
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(StoreError);
+    });
+  });
+
+  // H13b — network/timeout errors → StoreError (not untyped Error)
+  describe("network error propagates as StoreError (H13b)", () => {
+    it("getBalance wraps ECONNREFUSED as StoreError", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() => Promise.reject(new Error("ECONNREFUSED"))),
+      );
+      const store = new HttpxSupabaseStore(URL_BASE, KEY);
+      let thrown: unknown;
+      try {
+        await store.getBalance("u1");
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(StoreError);
+      expect((thrown as StoreError).message).toMatch(/ECONNREFUSED/);
+    });
+  });
+
+  // H13c — Decimal amounts serialized as strings, not JS numbers
+  describe("Decimal JSON serialization (H13c)", () => {
+    it("addCredits sends Decimal(0.0001) as the string '0.0001', not a number", async () => {
+      const captured = mockFetch({
+        id: "tx-1",
+        user_id: "u1",
+        amount: "0.0001",
+        new_balance: "0.0001",
+        lifetime_purchased: "0.0001",
+      });
+      const store = new HttpxSupabaseStore(URL_BASE, KEY);
+      await store.addCredits("u1", D("0.0001"));
+
+      const body = captured[0].body as Record<string, unknown>;
+      // Must be string "0.0001", not the JS float 0.0001
+      expect(body.p_amount).toBe("0.0001");
+      expect(typeof body.p_amount).toBe("string");
+    });
+
+    it("deductWithAllowance sends tiny Decimal as a string in the request body", async () => {
+      const captured = mockFetch({
+        transaction_id: "tx-1",
+        amount: "0.0001",
+        allowance_consumed: "0",
+        balance_after: "9.9999",
+        idempotent: false,
+        cap_warning: null,
+      });
+      const store = new HttpxSupabaseStore(URL_BASE, KEY);
+      await store.deductWithAllowance("u1", D("0.0001"));
+
+      const body = captured[0].body as Record<string, unknown>;
+      expect(body.p_amount).toBe("0.0001");
+      expect(typeof body.p_amount).toBe("string");
+    });
+  });
+
+  // M18 — URL malformation handling
+  describe("URL malformation (M18)", () => {
+    it("double trailing slash is normalized — no double slash in request URL", async () => {
+      const captured = mockFetch({ user_id: "u1", balance: "0", lifetime_purchased: "0" });
+      const store = new HttpxSupabaseStore("https://example.supabase.co//", KEY);
+      await store.getBalance("u1");
+      expect(captured[0].url).toBe(
+        "https://example.supabase.co/rest/v1/rpc/get_credits_balance",
+      );
+      // No double-slash in the path part (exclude the https:// protocol)
+      expect(captured[0].url.replace(/^https:\/\//, "")).not.toMatch(/\/\//);
+    });
+
+    it("URL with path appends RPC path without introducing double-slash", async () => {
+      const captured = mockFetch({ user_id: "u1", balance: "0", lifetime_purchased: "0" });
+      // The constructor strips trailing slashes; a path like /some/path stays as-is.
+      // The RPC endpoint is appended after the stored URL — verify no double-slash is introduced.
+      const store = new HttpxSupabaseStore("https://example.supabase.co/some/path", KEY);
+      await store.getBalance("u1");
+      // The resulting URL should be the stored base + /rest/v1/rpc/...
+      expect(captured[0].url).toBe(
+        "https://example.supabase.co/some/path/rest/v1/rpc/get_credits_balance",
+      );
+      // No double-slash anywhere after the protocol
+      expect(captured[0].url.replace(/^https:\/\//, "")).not.toMatch(/\/\//);
+    });
+  });
+
+  // Large response / pagination — listUserTransactions with 100 rows
+  describe("large response / pagination", () => {
+    it("listUserTransactions returns all 100 rows with correct types", async () => {
+      const rows = Array.from({ length: 100 }, (_, i) => ({
+        id: `tx-${i}`,
+        user_id: "u1",
+        amount: (-(i + 1) * 0.1).toFixed(4),
+        type: "deduction",
+        reference_type: "usage",
+        reference_id: `ref-${i}`,
+        metadata: { model: "gpt-4" },
+        created_at: new Date(2024, 0, 1, 0, i).toISOString(),
+        total_count: 100,
+      }));
+
+      mockFetch(rows);
+      const store = new HttpxSupabaseStore(URL_BASE, KEY);
+      const result = await store.listUserTransactions("u1", { limit: 100 });
+
+      expect(result.items).toHaveLength(100);
+      expect(result.total).toBe(100);
+
+      // Spot-check first and last items for correct typing — no truncation, no undefined fields
+      const first = result.items[0];
+      expect(first.id).toBe("tx-0");
+      expect(first.userId).toBe("u1");
+      expect(first.amount).toBeInstanceOf(Decimal);
+      expect(first.type).toBe("deduction");
+      expect(first.referenceType).toBe("usage");
+      expect(first.referenceId).toBe("ref-0");
+      expect(first.metadata).toEqual({ model: "gpt-4" });
+      expect(typeof first.createdAt).toBe("string");
+
+      const last = result.items[99];
+      expect(last.id).toBe("tx-99");
+      expect(last.amount).toBeInstanceOf(Decimal);
+      expect(last.referenceId).toBe("ref-99");
+
+      // Verify none of the items have undefined fields
+      for (const item of result.items) {
+        expect(item.id).toBeDefined();
+        expect(item.userId).toBeDefined();
+        expect(item.amount).toBeInstanceOf(Decimal);
+        expect(item.type).toBeDefined();
+        expect(item.createdAt).toBeDefined();
+      }
+    });
+
+    it("listUserTransactions sends correct params when limit is specified", async () => {
+      const captured = mockFetch([]);
+      const store = new HttpxSupabaseStore(URL_BASE, KEY);
+      await store.listUserTransactions("u1", { limit: 100, offset: 0 });
+
+      expect(captured[0].url).toBe(`${URL_BASE}/rest/v1/rpc/list_user_transactions`);
+      const body = captured[0].body as Record<string, unknown>;
+      expect(body.p_user_id).toBe("u1");
+      expect(body.p_limit).toBe(100);
+      expect(body.p_offset).toBe(0);
+    });
+  });
 });

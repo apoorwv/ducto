@@ -166,7 +166,29 @@ describe("loadConfigFromDict", () => {
     expect(config.minBalance).toBe("10");
   });
 
-  // ── CF5: Duplicate plan names rejected ──
+  // ── C1: minBalance type coercion / boundary ──
+
+  // C1a: minBalance: 0 is the valid boundary (check is `< 0`, so 0 must be accepted).
+  it("accepts minBalance: 0 (zero is a valid balance floor)", () => {
+    const config = loadConfigFromDict({
+      models: { "gpt-4": "input_tokens * 0.001" },
+      minBalance: 0,
+    });
+    expect(config.minBalance).toBe(0);
+  });
+
+  // C1b: minBalance: -1 is already covered by "rejects negative minBalance" above.
+  // This test explicitly documents that -1 is always rejected regardless of type.
+  it("rejects minBalance: -1 (negative balance floor makes no sense)", () => {
+    expect(() =>
+      loadConfigFromDict({
+        models: { "gpt-4": "input_tokens * 0.001" },
+        minBalance: -1,
+      }),
+    ).toThrow(ConfigError);
+  });
+
+  // CF5: Duplicate plan names rejected ──
   it("rejects two plans with the same name field", () => {
     expect(() =>
       loadConfigFromDict({

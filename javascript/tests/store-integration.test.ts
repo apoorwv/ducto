@@ -631,4 +631,179 @@ describe.runIf(DATABASE_URL)("PostgresStore integration (real Postgres 16)", () 
     );
     expect(stats.totalCreditsConsumed.equals(D("0.4500"))).toBe(true);
   });
+
+  // ── H4: RPC atomicity — cap-deny must NOT consume allowance ─────────
+  it("H4 — deductWithAllowance cap deny does not consume allowance", async () => {
+    const store = new PostgresStore(DATABASE_URL!, pg.Pool);
+    const PLAN_H4 = "00000000-0000-0000-0000-0000000000c1";
+    // Plan with monthly allowance of 10.
+    await pool.query(
+      `INSERT INTO public.credit_plans (id, name, free_allowance, plan_key) VALUES ($1, 'PlanH4', 10, $2)`,
+      [PLAN_H4, PLAN_H4],
+    );
+    await store.addCredits(PG_USER, D(50), "purchase");
+    await store.setUserPlan(PG_USER, PLAN_H4);
+
+    // Set a deny spend cap at 8. Attempt deduction of 20: allowance covers 10,
+    // net = 10. Cap check: 0 + 10 > 8 → deny fires before any allowance is consumed.
+    await pool.query(
+      `INSERT INTO public.credit_spend_caps (user_id, cap_type, cap_limit, action) VALUES ($1, 'daily', 8, 'deny')`,
+      [PG_USER],
+    );
+
+    const r = await store.deductWithAllowance(PG_USER, D("20"), { idempotencyKey: "h4-deny" });
+    expect(r.error).toBe("cap_reached");
+
+    // Allowance window must be 0 — no allowance leaked on the failed attempt.
+    const allowance = await store.checkAllowance(PG_USER);
+    expect(allowance.allowanceRemaining.toString()).toBe("10");
+
+    // Confirm a normal deduction of 5 still works (5 net <= 8 cap limit).
+    const ok = await store.deductWithAllowance(PG_USER, D("5"), { idempotencyKey: "h4-ok" });
+    expect(ok.error).toBeUndefined();
+  });
+
+  // ── H6: Decimal round-trip precision ────────────────────────────────
+  it("H6 — decimal amounts survive Postgres round-trip with 4dp precision", async () => {
+    const store = new PostgresStore(DATABASE_URL!, pg.Pool);
+
+    await store.addCredits(PG_USER, D("0.0001"), "purchase");
+    let bal = await store.getBalance(PG_USER);
+    expect(bal.balance.toFixed(4)).toBe("0.0001");
+
+    await store.addCredits(PG_USER, D("0.1234"), "purchase");
+    bal = await store.getBalance(PG_USER);
+    expect(bal.balance.toFixed(4)).toBe("0.1235");
+
+    const deduct = await store.deductWithAllowance(PG_USER, D("0.0001"), {
+      idempotencyKey: "h6-deduct",
+    });
+    expect(deduct.error).toBeUndefined();
+    bal = await store.getBalance(PG_USER);
+    expect(bal.balance.toFixed(4)).toBe("0.1234");
+  });
+
+  // ── H7: Migration idempotency ────────────────────────────────────────
+  it("H7 — running setup() twice on same database does not error", async () => {
+    // PostgresStore.setup() intentionally throws (H17) — it does not run
+    // migrations itself. The underlying SQL migrations must be idempotent.
+    // Apply them twice and confirm no error, then verify basic store operations
+    // still work on the resulting schema.
+    await expect(applyMigrations(pool)).resolves.toBeUndefined();
+    await expect(applyMigrations(pool)).resolves.toBeUndefined();
+
+    const store = new PostgresStore(DATABASE_URL!, pg.Pool);
+    await store.addCredits(PG_USER, D(10), "purchase");
+    const bal = await store.getBalance(PG_USER);
+    expect(bal.balance.gte(D(10))).toBe(true);
+  });
+
+  // ── H10: MemoryStore vs PostgresStore parity ────────────────────────
+  it("H10 — MemoryStore and PostgresStore produce identical results for same operations", async () => {
+    const USER_H10 = "00000000-0000-0000-0000-000000000010";
+    // Ensure this user has no leftover balance from prior runs (defensive cleanup).
+    await pool.query(`DELETE FROM public.credit_transactions WHERE user_id = $1`, [USER_H10]);
+    await pool.query(`DELETE FROM public.user_credits WHERE user_id = $1`, [USER_H10]);
+    await pool.query(
+      `INSERT INTO auth.users (id) VALUES ($1) ON CONFLICT DO NOTHING`,
+      [USER_H10],
+    );
+
+    const pgStore = new PostgresStore(DATABASE_URL!, pg.Pool);
+    const memStore = new MemoryStore();
+
+    // Run the same sequence on both stores and capture the idempotent-replay result.
+    const run = async (store: PostgresStore | MemoryStore) => {
+      await store.addCredits(USER_H10, D("10.0000"), "purchase");
+      await store.deductWithAllowance(USER_H10, D("3.0000"), { idempotencyKey: "h10-a" });
+      await store.deductWithAllowance(USER_H10, D("3.0000"), { idempotencyKey: "h10-b" });
+      // Idempotent replay — same key as the previous call.
+      const replay = await store.deductWithAllowance(USER_H10, D("3.0000"), {
+        idempotencyKey: "h10-b",
+      });
+      return replay;
+    };
+
+    const pgReplay = await run(pgStore);
+    const memReplay = await run(memStore);
+
+    // Both replays must be flagged as idempotent.
+    expect(pgReplay.idempotent).toBe(true);
+    expect(memReplay.idempotent).toBe(true);
+
+    // Both balances must be 4.0000 (10 - 3 - 3; idempotent replay does not charge again).
+    const pgBal = await pgStore.getBalance(USER_H10);
+    const memBal = await memStore.getBalance(USER_H10);
+    expect(pgBal.balance.toFixed(4)).toBe("4.0000");
+    expect(memBal.balance.toFixed(4)).toBe("4.0000");
+    expect(pgBal.balance.toFixed(4)).toBe(memBal.balance.toFixed(4));
+  });
+
+  // ── H12: TOCTOU — concurrent cap check + deduct ─────────────────────
+  it("H12 — concurrent deductions cannot bypass spend cap", async () => {
+    const store = new PostgresStore(DATABASE_URL!, pg.Pool);
+    await store.addCredits(PG_USER, D(50), "purchase");
+
+    // Daily deny cap of 10.
+    await pool.query(
+      `INSERT INTO public.credit_spend_caps (user_id, cap_type, cap_limit, action) VALUES ($1, 'daily', 10, 'deny')`,
+      [PG_USER],
+    );
+
+    // 10 concurrent deductions of 2 each (total possible: 10 × 2 = 20, cap = 10).
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        store.deductWithAllowance(PG_USER, D("2.0000"), { idempotencyKey: `h12-${i}` }),
+      ),
+    );
+
+    const succeeded = results.filter((r) => !r.error);
+    const capReached = results.filter((r) => r.error === "cap_reached");
+
+    // Exactly 5 succeed (5 × 2 = 10 = cap limit), the remaining 5 hit cap_reached.
+    expect(succeeded.length).toBe(5);
+    expect(capReached.length).toBe(5);
+
+    const finalBal = (await store.getBalance(PG_USER)).balance;
+    expect(finalBal.toString()).toBe("40");
+  }, 30000);
+
+  // ── M10: Concurrent team deductions ─────────────────────────────────
+  it("M10 — concurrent team deductions from different users do not over-spend", async () => {
+    const store = new PostgresStore(DATABASE_URL!, pg.Pool);
+
+    // Seed 20 distinct users.
+    const teamUsers: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      const uid = `00000000-0000-0000-0000-0000000001${String(i).padStart(2, "0")}`;
+      teamUsers.push(uid);
+    }
+    await pool.query(
+      `INSERT INTO auth.users (id) SELECT unnest($1::uuid[]) ON CONFLICT DO NOTHING`,
+      [teamUsers],
+    );
+    for (const uid of teamUsers) {
+      await store.addCredits(uid, D(1), "adjustment");
+    }
+
+    const team = await store.createTeam("ConcurrentPool", D(20));
+    for (const uid of teamUsers) {
+      await store.addTeamMember(team.teamId, uid, "member");
+    }
+
+    // 20 concurrent deductions of 3 each against a pool of 20.
+    const results = await Promise.all(
+      teamUsers.map((uid) => store.deductTeam(team.teamId, uid, D("3.0000"))),
+    );
+
+    const succeeded = results.filter((r) => !r.error);
+    const failed = results.filter((r) => !!r.error);
+
+    // floor(20 / 3) = 6 succeed; remaining 14 fail with insufficient balance.
+    expect(succeeded.length).toBe(6);
+    expect(failed.length).toBe(14);
+
+    const teamBal = (await store.getTeamBalance(team.teamId)).balance;
+    expect(teamBal.gte(0)).toBe(true);
+  }, 30000);
 });

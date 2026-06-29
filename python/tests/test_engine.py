@@ -422,3 +422,133 @@ class TestCalculateBatchEmpty:
         results = engine.calculate_batch([])
         assert results == []
         assert isinstance(results, list)
+
+
+# ── EN10: Model prefix ambiguity in calculate() ──────────────────────────────
+
+
+class TestModelPrefixAmbiguity:
+    """EN10 — calculate() uses exact match then _default; resolve_model() does prefix.
+
+    _calc_model performs: (1) exact match, (2) _default fallback.
+    It does NOT do prefix matching — that is only available via resolve_model().
+    This test documents the boundary precisely so future refactors don't
+    accidentally change the contract.
+    """
+
+    _CONFIG = {
+        "version": 1,
+        "models": {
+            "gpt-4": "input_tokens * 0.002",
+            "gpt-4-turbo": "input_tokens * 0.003",
+            "_default": "input_tokens * 0.001",
+        },
+    }
+
+    def test_exact_match_gpt4_turbo(self) -> None:
+        # "gpt-4-turbo" has an exact entry -> 1000 * 0.003 = 3.0000
+        engine = PricingEngine.from_dict(self._CONFIG)
+        result = engine.calculate(UsageMetrics(model="gpt-4-turbo", input_tokens=1000))
+        assert result.total == Decimal("3.0000")
+
+    def test_no_exact_match_falls_to_default_not_prefix(self) -> None:
+        # "gpt-4-0613" has no exact entry; _calc_model skips prefix matching
+        # and falls through to _default -> 1000 * 0.001 = 1.0000, NOT 2.0000.
+        engine = PricingEngine.from_dict(self._CONFIG)
+        result = engine.calculate(UsageMetrics(model="gpt-4-0613", input_tokens=1000))
+        assert result.total == Decimal("1.0000")
+
+    def test_resolve_model_does_prefix_match(self) -> None:
+        # resolve_model() (the public helper) DOES do prefix matching.
+        engine = PricingEngine.from_dict(self._CONFIG)
+        assert engine.resolve_model("gpt-4-0613") == "gpt-4"
+
+    def test_unknown_model_falls_to_default(self) -> None:
+        # "claude-3" has neither exact nor prefix match -> _default -> 1.0000
+        engine = PricingEngine.from_dict(self._CONFIG)
+        result = engine.calculate(UsageMetrics(model="claude-3", input_tokens=1000))
+        assert result.total == Decimal("1.0000")
+
+
+# ── EN11: calculate_batch preserves input order ──────────────────────────────
+
+
+class TestCalculateBatchOrdering:
+    """EN11 — calculate_batch returns results in the same order as inputs."""
+
+    def test_batch_order_preserved(self) -> None:
+        engine = PricingEngine.from_dict(FULL_PRICING)
+        m1 = UsageMetrics(model="claude-opus-4", input_tokens=1000, output_tokens=0)
+        m2 = UsageMetrics(model="gemini-2.5-flash", input_tokens=500, output_tokens=0)
+        m3 = UsageMetrics(model="claude-sonnet-4", input_tokens=200, output_tokens=0)
+
+        # Expected totals for each individually:
+        # m1: 1000 * 0.005 = 5.0000
+        # m2: 500 * 0.0005 = 0.2500
+        # m3: 200 * 0.003 = 0.6000
+        individual = [engine.calculate(m) for m in [m1, m2, m3]]
+        batch = engine.calculate_batch([m1, m2, m3])
+
+        assert len(batch) == 3
+        for i, (ind, bat) in enumerate(zip(individual, batch)):
+            assert bat.total == ind.total, (
+                f"index {i}: batch={bat.total}, individual={ind.total}"
+            )
+
+    def test_batch_order_with_varied_models(self) -> None:
+        # Use a config where each model produces a clearly distinct total.
+        config = {
+            "models": {
+                "m1": "input_tokens * 1",
+                "m2": "input_tokens * 2",
+                "m3": "input_tokens * 3",
+            }
+        }
+        engine = PricingEngine.from_dict(config)
+        metrics = [
+            UsageMetrics(model="m3", input_tokens=10),  # 30
+            UsageMetrics(model="m1", input_tokens=10),  # 10
+            UsageMetrics(model="m2", input_tokens=10),  # 20
+        ]
+        results = engine.calculate_batch(metrics)
+        assert results[0].total == Decimal("30.0000")
+        assert results[1].total == Decimal("10.0000")
+        assert results[2].total == Decimal("20.0000")
+
+
+# ── EN12: Cache discount clamped at zero ─────────────────────────────────────
+
+
+class TestCacheDiscountClampedAtZero:
+    """EN12 — total is never negative even when cache savings exceed model cost."""
+
+    def test_large_cache_savings_clamped_to_zero(self) -> None:
+        # Model cost: 10 * 0.001 = 0.01
+        # Cache savings: -5000 * 0.01 = -50.0
+        # raw total = 0.01 - 50.0 = -49.99 -> clamped to 0.0000
+        config = {
+            "models": {"_default": "input_tokens * 0.001"},
+            "cache": {"discount": "-cache_read_tokens * 0.01"},
+        }
+        engine = PricingEngine.from_dict(config)
+        result = engine.calculate(
+            UsageMetrics(model="_default", input_tokens=10, cache_read_tokens=5000)
+        )
+        assert result.total == Decimal("0.0000"), (
+            f"total should be clamped to 0, got {result.total}"
+        )
+        # Component breakdown values are preserved (not clamped).
+        assert result.cache_savings == Decimal("-50.0000")
+        assert result.model_credits == Decimal("0.0100")
+
+    def test_total_never_negative_regardless_of_magnitude(self) -> None:
+        # Extreme scenario: effectively unlimited cache discount.
+        config = {
+            "models": {"_default": "input_tokens * 0.001"},
+            "cache": {"discount": "-cache_read_tokens * 1000"},
+        }
+        engine = PricingEngine.from_dict(config)
+        result = engine.calculate(
+            UsageMetrics(model="_default", input_tokens=1, cache_read_tokens=999999)
+        )
+        assert result.total == Decimal("0.0000")

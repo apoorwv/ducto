@@ -363,6 +363,85 @@ describe("model resolution: exact match over prefix", () => {
   });
 });
 
+// ── C4: Plan rate overrides — document actual behavior ──
+describe("plan rate overrides (C4)", () => {
+  it("documents that plan rateOverrides are stored but NOT applied by the engine", () => {
+    // The engine's calcModel() uses config.models directly and does not look up
+    // any active user plan's rateOverrides. The overrides are validated at
+    // config-load time but the engine has no concept of per-user plan context.
+    // TODO: plan rate overrides are stored but not yet applied by the engine.
+    const engine = PricingEngine.fromDict({
+      models: {
+        "gpt-4": "input_tokens * 0.002",
+        _default: "input_tokens * 0.001",
+      },
+      plans: {
+        pro: {
+          id: "p1",
+          name: "Pro",
+          rateOverrides: { "gpt-4": "input_tokens * 0.005" },
+        },
+      },
+    });
+    // The override rate is 0.005, but the engine applies the base rate 0.002.
+    // 1000 * 0.002 = 2.0000 (not 1000 * 0.005 = 5.0000).
+    const result = engine.calculate({ model: "gpt-4", inputTokens: 1000 });
+    // Overrides are NOT applied: expect base rate result (2.0000), not override (5.0000).
+    expect(result.modelCredits.toFixed(4)).toBe("2.0000");
+  });
+});
+
+// ── M5: calculateBatch error propagation for unknown model with no _default ──
+describe("calculateBatch error propagation (M5)", () => {
+  it("throws with a descriptive error when model is unknown and no _default exists", () => {
+    const engine = PricingEngine.fromDict({
+      models: { "gpt-4": "input_tokens * 0.001" },
+    });
+    // calculateBatch maps over calculate(); the first unknown model should throw,
+    // not silently produce undefined or zero.
+    expect(() =>
+      engine.calculateBatch([
+        { model: "gpt-4", inputTokens: 100 },
+        { model: "unknown-model", inputTokens: 100 },
+      ]),
+    ).toThrow(ConfigError);
+  });
+});
+
+// ── M6: Model prefix ambiguity — exact match beats prefix; prefix beats _default ──
+describe("model prefix ambiguity (M6)", () => {
+  const m6Engine = PricingEngine.fromDict({
+    models: {
+      "gpt-4": "input_tokens * 0.002",
+      "gpt-4-turbo": "input_tokens * 0.003",
+      _default: "input_tokens * 0.001",
+    },
+  });
+
+  it("gpt-4-turbo uses exact match (0.003 rate) → 3.0000", () => {
+    // Exact key "gpt-4-turbo" exists; must NOT fall through to gpt-4 prefix.
+    const result = m6Engine.calculate({ model: "gpt-4-turbo", inputTokens: 1000 });
+    expect(result.modelCredits.toFixed(4)).toBe("3.0000");
+  });
+
+  it("gpt-4-0613 falls back to _default — calcModel does NOT do prefix matching", () => {
+    // resolveModel() does prefix matching, but calcModel() (used by calculate()) does
+    // only exact-key lookup then falls to _default. So "gpt-4-0613" has no exact match
+    // and no _default prefix walk — it goes straight to _default (0.001 rate).
+    // NOTE: if prefix matching were wired into calcModel(), the expectation would be
+    // 2.0000 (gpt-4 prefix, 0.002 rate). This test documents that it is NOT applied.
+    const result = m6Engine.calculate({ model: "gpt-4-0613", inputTokens: 1000 });
+    // _default rate 0.001 → 1000 * 0.001 = 1.0000
+    expect(result.modelCredits.toFixed(4)).toBe("1.0000");
+  });
+
+  it("claude-3 falls back to _default (0.001 rate) → 1.0000", () => {
+    // No exact or prefix match → uses _default.
+    const result = m6Engine.calculate({ model: "claude-3", inputTokens: 1000 });
+    expect(result.modelCredits.toFixed(4)).toBe("1.0000");
+  });
+});
+
 // ── Cross-SDK parity fixture (contract §7) — pricing_cases ──
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const fixturePath = resolve(__dirname, "../../tests/parity/expression_cases.json");
@@ -385,10 +464,21 @@ describe("parity fixture — pricing_cases (totals)", () => {
   for (const c of fixture.pricing_cases) {
     it(c.name, () => {
       const engine = PricingEngine.fromDict(c.config);
+      const rawToolCalls = c.metrics.tool_calls as Array<{ name: string }> | undefined;
       const metrics: UsageMetrics = {
-        model: c.metrics.model ?? null,
-        inputTokens: c.metrics.input_tokens ?? 0,
-        outputTokens: c.metrics.output_tokens ?? 0,
+        model: (c.metrics.model as string) ?? null,
+        inputTokens: (c.metrics.input_tokens as number) ?? 0,
+        outputTokens: (c.metrics.output_tokens as number) ?? 0,
+        cacheReadTokens: (c.metrics.cache_read_tokens as number) ?? 0,
+        cacheWriteTokens: (c.metrics.cache_write_tokens as number) ?? 0,
+        searchQueries: (c.metrics.search_queries as number) ?? 0,
+        searchResults: (c.metrics.search_results as number) ?? 0,
+        webSearchCalls: (c.metrics.web_search_calls as number) ?? 0,
+        codeExecCalls: (c.metrics.code_exec_calls as number) ?? 0,
+        fixedJob: (c.metrics.fixed_job as string) ?? undefined,
+        toolCalls: Array.isArray(rawToolCalls)
+          ? rawToolCalls.map((t) => ({ name: t.name }))
+          : [],
       };
       const result = engine.calculate(metrics);
       expect(result.total.toFixed(4)).toBe(c.expected_total);
