@@ -35,7 +35,6 @@ from ducto.interface.models import (
     PricingConfigResult,
     RefundResult,
     ReleaseResult,
-    ReserveResult,
     SetupResult,
     SetUserPlanResult,
     SpendByModelRow,
@@ -303,43 +302,6 @@ class HttpxSupabaseStore(CreditStore):
             lifetime_purchased=_dec(row.get("lifetime_purchased")),
         )
 
-    def reserve_credits(
-        self,
-        user_id: str,
-        amount: Decimal,
-        operation_type: str,
-        metadata: CreditMetadata | None = None,
-        min_balance: Decimal = Decimal(5),
-    ) -> ReserveResult:
-        amount = _dec(amount)
-        min_balance = _dec(min_balance)
-        row = self._rpc(
-            "reserve_credits",
-            {
-                "p_user_id": user_id,
-                "p_amount": str(amount),
-                "p_operation_type": operation_type,
-                "p_metadata": (metadata.model_dump(mode="json") if metadata else {}),
-                "p_min_balance": str(min_balance),
-            },
-        )
-
-        if "error" in row:
-            return ReserveResult(
-                reservation_id="",
-                user_id=user_id,
-                amount=Decimal(0),
-                error=str(row["error"]),
-            )
-
-        return ReserveResult(
-            reservation_id=str(row["reservation_id"]),
-            user_id=str(row.get("user_id", user_id)),
-            amount=_dec(row.get("amount")),
-            balance=_dec(row.get("balance")),
-            reserved_total=_dec(row.get("reserved")),
-        )
-
     def deduct_with_allowance(
         self,
         user_id: str,
@@ -388,46 +350,6 @@ class HttpxSupabaseStore(CreditStore):
             balance_after=_dec(row.get("balance_after")),
             idempotent=bool(row.get("idempotent", False)),
             cap_warning=row.get("cap_warning") or None,
-        )
-
-    def deduct_credits(
-        self,
-        user_id: str,
-        reservation_id: str,
-        amount: Decimal,
-        idempotency_key: str | None = None,
-        metadata: CreditMetadata | None = None,
-    ) -> DeductionResult:
-        amount = _dec(amount)
-        meta = metadata.model_dump(mode="json") if metadata else {}
-        if idempotency_key:
-            meta["idempotency_key"] = idempotency_key
-
-        row = self._rpc(
-            "deduct_credits",
-            {
-                "p_user_id": user_id,
-                "p_reservation_id": reservation_id,
-                "p_amount": str(amount),
-                "p_metadata": meta,
-            },
-        )
-
-        if "error" in row:
-            return DeductionResult(
-                transaction_id="",
-                user_id=user_id,
-                amount=-amount,
-                balance_after=Decimal(0),
-                error=str(row["error"]),
-            )
-
-        return DeductionResult(
-            transaction_id=str(row["id"]),
-            user_id=str(row.get("user_id", user_id)),
-            amount=_dec(row.get("amount"), -amount),
-            balance_after=_dec(row.get("new_balance")),
-            idempotent=bool(row.get("idempotent", False)),
         )
 
     # ── Lease lifecycle (atomic admission) ─────────────────────────────

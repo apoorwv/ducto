@@ -47,16 +47,6 @@ export interface AddCreditsResult {
   lifetimePurchased: Decimal;
 }
 
-/** Result of reserving credits for an operation. */
-export interface ReserveResult {
-  reservationId: string;
-  userId: string;
-  amount: Decimal;
-  balance: Decimal;
-  reservedTotal: Decimal;
-  error?: string | null;
-}
-
 /** Result of deducting credits. */
 export interface DeductionResult {
   transactionId: string;

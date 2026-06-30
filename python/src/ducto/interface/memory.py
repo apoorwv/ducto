@@ -31,7 +31,6 @@ from ducto.interface.models import (
     PricingConfigResult,
     RefundResult,
     ReleaseResult,
-    ReserveResult,
     SetupResult,
     SetUserPlanResult,
     SpendByModelRow,
@@ -84,11 +83,10 @@ class _TransactionRecord(BaseModel):
 class _ReservationRecord(BaseModel):
     """Internal reservation/lease record for MemoryStore.
 
-    The legacy ``reserve_credits``/``deduct_credits`` path uses the base fields and
-    keeps ``status='active'``. The lease lifecycle (``create_lease``/``settle_lease``/
-    ``release_lease``/``renew_lease``) additionally drives ``status`` through
-    ``active → settled | released | expired`` and records the resolved
-    ``billing_mode``/``overdraft_floor`` plus the settling transaction id.
+    The lease lifecycle (``create_lease``/``settle_lease``/``release_lease``/
+    ``renew_lease``) drives ``status`` through ``active → settled | released |
+    expired`` and records the resolved ``billing_mode``/``overdraft_floor``
+    plus the settling transaction id.
     """
 
     id: str
@@ -140,9 +138,9 @@ class MemoryStore(CreditStore):
 
     Thread-safety (contract §3, C2): every mutating/reading method takes a single
     re-entrant lock so each emulated "transaction" — most importantly the
-    read-modify-write inside :meth:`deduct_with_allowance` and
-    :meth:`deduct_credits` — is atomic and cannot double-spend under concurrent
-    callers. The lock is re-entrant so helpers can be called while held.
+    read-modify-write inside :meth:`deduct_with_allowance` — is atomic and cannot
+    double-spend under concurrent callers. The lock is re-entrant so helpers can
+    be called while held.
     """
 
     def __init__(self) -> None:
@@ -345,145 +343,6 @@ class MemoryStore(CreditStore):
                 balance_after=self._balances[user_id],
                 idempotent=False,
                 cap_warning=cap_warning,
-            )
-
-    def reserve_credits(
-        self,
-        user_id: str,
-        amount: Decimal,
-        operation_type: str,
-        metadata: CreditMetadata | None = None,
-        min_balance: Decimal = Decimal(5),
-    ) -> ReserveResult:
-        amount = _as_decimal(amount)
-        min_balance = _as_decimal(min_balance)
-
-        if not amount.is_finite() or amount <= 0:
-            return ReserveResult(
-                reservation_id="",
-                user_id=user_id,
-                amount=Decimal(0),
-                error="invalid_amount",
-            )
-
-        with self._lock:
-            balance = self._balances.get(user_id, Decimal(0))
-            self._purge_expired_reservations(user_id)
-            reserved_total = sum(
-                (r.amount for r in self._reservations.values() if r.user_id == user_id),
-                Decimal(0),
-            )
-            available = balance - reserved_total
-
-            # Canonical semantics (contract §3): reject — never cap — if reserving
-            # the full amount would breach the floor.
-            if available - amount < min_balance:
-                return ReserveResult(
-                    reservation_id="",
-                    user_id=user_id,
-                    amount=Decimal(0),
-                    error="insufficient_credits",
-                )
-
-            rid = str(uuid.uuid4())
-            self._reservations[rid] = _ReservationRecord(
-                id=rid,
-                user_id=user_id,
-                amount=amount,
-                operation_type=operation_type,
-                metadata=metadata.model_dump() if metadata else {},
-                expires_at=_utcnow() + timedelta(minutes=10),
-            )
-
-            return ReserveResult(
-                reservation_id=rid,
-                user_id=user_id,
-                amount=amount,
-                balance=balance,
-                reserved_total=reserved_total + amount,
-            )
-
-    def deduct_credits(
-        self,
-        user_id: str,
-        reservation_id: str,
-        amount: Decimal,
-        idempotency_key: str | None = None,
-        metadata: CreditMetadata | None = None,
-    ) -> DeductionResult:
-        amount = _as_decimal(amount)
-
-        if not amount.is_finite() or amount <= 0:
-            return DeductionResult(
-                transaction_id="",
-                user_id=user_id,
-                amount=Decimal(0),
-                balance_after=self._balances.get(user_id, Decimal(0)),
-                error="invalid_amount",
-            )
-
-        with self._lock:
-            # Idempotency check (user-scoped).
-            if idempotency_key:
-                for tx in self._transactions:
-                    if tx.user_id == user_id and tx.metadata.get("idempotency_key") == idempotency_key:
-                        return DeductionResult(
-                            transaction_id=tx.id,
-                            user_id=user_id,
-                            amount=tx.amount,
-                            balance_after=self._balances.get(user_id, Decimal(0)),
-                            idempotent=True,
-                        )
-
-            # The reservation is the spend ceiling (C3): require it to exist,
-            # belong to this user, and be unexpired, then clamp amount ≤ reserved.
-            self._purge_expired_reservations(user_id)
-            reservation = self._reservations.get(reservation_id)
-            if reservation is None or reservation.user_id != user_id:
-                return DeductionResult(
-                    transaction_id="",
-                    user_id=user_id,
-                    amount=Decimal(0),
-                    balance_after=self._balances.get(user_id, Decimal(0)),
-                    error="not_found",
-                )
-
-            amount = min(amount, reservation.amount)
-
-            current = self._balances.get(user_id, Decimal(0))
-            if current < amount:
-                return DeductionResult(
-                    transaction_id="",
-                    user_id=user_id,
-                    amount=-amount,
-                    balance_after=current,
-                    error="insufficient_credits",
-                )
-
-            self._balances[user_id] = current - amount
-            del self._reservations[reservation_id]
-
-            tx_id = str(uuid.uuid4())
-            tx_meta = metadata.model_dump(exclude_none=True) if metadata else {}
-            if idempotency_key:
-                tx_meta["idempotency_key"] = idempotency_key
-            self._transactions.append(
-                _TransactionRecord(
-                    id=tx_id,
-                    user_id=user_id,
-                    amount=-amount,
-                    type="usage",
-                    metadata=tx_meta,
-                    created_at=_utcnow(),
-                )
-            )
-
-            return DeductionResult(
-                transaction_id=tx_id,
-                user_id=user_id,
-                amount=-amount,
-                balance_after=self._balances[user_id],
-                idempotent=False,
             )
 
     # ── Lease lifecycle (atomic admission) ─────────────────────────────

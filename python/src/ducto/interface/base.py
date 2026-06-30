@@ -31,7 +31,6 @@ from ducto.interface.models import (
     PricingConfigResult,
     RefundResult,
     ReleaseResult,
-    ReserveResult,
     SetupResult,
     SetUserPlanResult,
     SpendByModelRow,
@@ -159,38 +158,6 @@ class CreditStore(ABC):
         """
         ...
 
-    @abstractmethod
-    def reserve_credits(
-        self,
-        user_id: str,
-        amount: Decimal,
-        operation_type: str,
-        metadata: CreditMetadata | None = None,
-        min_balance: Decimal = Decimal(5),
-    ) -> ReserveResult:
-        """Reserve credits for an upcoming operation.
-
-        Locks the user row to prevent concurrent overspend.
-        Returns a ``ReserveResult`` with ``error`` set on failure.
-        """
-        ...
-
-    @abstractmethod
-    def deduct_credits(
-        self,
-        user_id: str,
-        reservation_id: str,
-        amount: Decimal,
-        idempotency_key: str | None = None,
-        metadata: CreditMetadata | None = None,
-    ) -> DeductionResult:
-        """Finalize a credit deduction and release the reservation.
-
-        If ``idempotency_key`` is provided and a matching transaction already
-        exists, returns the existing result (idempotent replay).
-        """
-        ...
-
     # ── Lease lifecycle (atomic admission) ─────────────────────────────
     #
     # The lease is the canonical admission primitive (interface plan §3/D4).
@@ -245,7 +212,7 @@ class CreditStore(ABC):
         """Charge the **actual** cost against a lease, then mark it settled (D5).
 
         De-clamped: charges ``amount`` even if it exceeds the lease hold (overdraft),
-        and — unlike :meth:`deduct_credits` — never clamps to the reserved ceiling.
+        never clamps to the lease amount.
         Pipeline: idempotency replay → allowance consume → spend-cap (advisory at
         settle: a breach sets ``cap_warning`` but never blocks) → debit (no floor
         block; balance may go negative in overdraft) → ledger row → mark lease

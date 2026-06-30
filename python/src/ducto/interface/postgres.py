@@ -34,7 +34,6 @@ from ducto.interface.models import (
     PricingConfigResult,
     RefundResult,
     ReleaseResult,
-    ReserveResult,
     SetupResult,
     SetUserPlanResult,
     SpendByModelRow,
@@ -182,54 +181,6 @@ class PostgresStore(CreditStore):
             lifetime_purchased=_dec(result_dict.get("lifetime_purchased")),
         )
 
-    def reserve_credits(
-        self,
-        user_id: str,
-        amount: Decimal,
-        operation_type: str,
-        metadata: CreditMetadata | None = None,
-        min_balance: Decimal = Decimal(5),
-    ) -> ReserveResult:
-        amount = _dec(amount)
-        min_balance = _dec(min_balance)
-        conn = self._conn()
-        try:
-            with conn.cursor() as cur:
-                cur.callproc(
-                    "reserve_credits",
-                    [
-                        user_id,
-                        amount,
-                        operation_type,
-                        json.dumps(metadata.model_dump(mode="json")) if metadata else "{}",
-                        min_balance,
-                    ],
-                )
-                row = cur.fetchone()
-            conn.commit()
-        finally:
-            conn.close()
-
-        if not row:
-            return ReserveResult(reservation_id="", user_id=user_id, amount=Decimal(0), error="no result")
-
-        result_dict = row[0] if isinstance(row[0], dict) else {}
-        if "error" in result_dict:
-            return ReserveResult(
-                reservation_id="",
-                user_id=user_id,
-                amount=Decimal(0),
-                error=str(result_dict["error"]),
-            )
-
-        return ReserveResult(
-            reservation_id=str(result_dict.get("reservation_id", "")),
-            user_id=str(result_dict.get("user_id", user_id)),
-            amount=_dec(result_dict.get("amount")),
-            balance=_dec(result_dict.get("balance")),
-            reserved_total=_dec(result_dict.get("reserved")),
-        )
-
     def deduct_with_allowance(
         self,
         user_id: str,
@@ -288,58 +239,6 @@ class PostgresStore(CreditStore):
             balance_after=_dec(result_dict.get("balance_after")),
             idempotent=bool(result_dict.get("idempotent", False)),
             cap_warning=result_dict.get("cap_warning") or None,
-        )
-
-    def deduct_credits(
-        self,
-        user_id: str,
-        reservation_id: str,
-        amount: Decimal,
-        idempotency_key: str | None = None,
-        metadata: CreditMetadata | None = None,
-    ) -> DeductionResult:
-        amount = _dec(amount)
-        meta = metadata.model_dump(mode="json") if metadata else {}
-        if idempotency_key:
-            meta["idempotency_key"] = idempotency_key
-
-        conn = self._conn()
-        try:
-            with conn.cursor() as cur:
-                cur.callproc(
-                    "deduct_credits",
-                    [user_id, reservation_id, amount, json.dumps(meta)],
-                )
-                row = cur.fetchone()
-            conn.commit()
-        finally:
-            conn.close()
-
-        if not row:
-            return DeductionResult(
-                transaction_id="",
-                user_id=user_id,
-                amount=-amount,
-                balance_after=Decimal(0),
-                error="no result",
-            )
-
-        result_dict = row[0] if isinstance(row[0], dict) else {}
-        if "error" in result_dict:
-            return DeductionResult(
-                transaction_id="",
-                user_id=user_id,
-                amount=-amount,
-                balance_after=Decimal(0),
-                error=str(result_dict["error"]),
-            )
-
-        return DeductionResult(
-            transaction_id=str(result_dict.get("id", "")),
-            user_id=str(result_dict.get("user_id", user_id)),
-            amount=_dec(result_dict.get("amount"), -amount),
-            balance_after=_dec(result_dict.get("new_balance")),
-            idempotent=bool(result_dict.get("idempotent", False)),
         )
 
     # ── Lease lifecycle (atomic admission) ─────────────────────────────
@@ -984,7 +883,7 @@ class PostgresStore(CreditStore):
         amount = _dec(amount)
         meta = metadata.model_dump(mode="json", exclude_none=True) if metadata else {}
         # Thread the idempotency key through metadata (the RPC reads it from
-        # metadata->>'idempotency_key'), matching deduct_credits (H12).
+        # metadata->>'idempotency_key') for idempotent replay (H12).
         if idempotency_key:
             meta["idempotency_key"] = idempotency_key
         conn = self._conn()

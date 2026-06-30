@@ -197,14 +197,6 @@ describe("HttpxSupabaseStore", () => {
       expect(result.error).toBe("insufficient_credits");
     });
 
-    it("reserveCredits maps error envelope", async () => {
-      mockFetch({ error: "insufficient_credits", balance: "10", reserved: "0" });
-      const store = new HttpxSupabaseStore(URL_BASE, KEY);
-      const result = await store.reserveCredits("u1", D(50), "usage");
-      expect(result.error).toBe("insufficient_credits");
-      expect(result.balance.toString()).toBe("10");
-    });
-
     it("refundCredits maps over_refund envelope", async () => {
       mockFetch({ error: "over_refund", user_id: "u1", new_balance: "100" });
       const store = new HttpxSupabaseStore(URL_BASE, KEY);

@@ -294,26 +294,6 @@ describe.runIf(DATABASE_URL)("PostgresStore integration (real Postgres 16)", () 
     expect(b.error).toBe("cap_reached");
   });
 
-  // ── Reserve / deduct two-phase (C3) ─────────────────────────────────
-  it("deductCredits clamps to the reserved ceiling (C3)", async () => {
-    const store = new PostgresStore(DATABASE_URL!, pg.Pool);
-    await store.addCredits(PG_USER, D(100), "purchase");
-
-    const reserve = await store.reserveCredits(PG_USER, D(10), "usage", null, D(0));
-    expect(reserve.error).toBeUndefined();
-    const deduct = await store.deductCredits(PG_USER, reserve.reservationId, D(1000));
-    expect(deduct.error).toBeUndefined();
-    expect(deduct.amount.toString()).toBe("-10");
-    expect((await store.getBalance(PG_USER)).balance.toString()).toBe("90");
-  });
-
-  it("reserve rejects (does not cap) below min_balance (C3 parity)", async () => {
-    const store = new PostgresStore(DATABASE_URL!, pg.Pool);
-    await store.addCredits(PG_USER, D(20), "purchase");
-    const reserve = await store.reserveCredits(PG_USER, D(10), "usage", null, D(15));
-    expect(reserve.error).toBe("insufficient_credits");
-  });
-
   // ── Refunds ─────────────────────────────────────────────────────────
   it("full refund restores balance; over-refund and duplicate rejected", async () => {
     const store = new PostgresStore(DATABASE_URL!, pg.Pool);

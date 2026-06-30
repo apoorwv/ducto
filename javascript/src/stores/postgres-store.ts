@@ -25,7 +25,6 @@ import type {
   PricingConfigResult,
   RefundResult,
   ReleaseResult,
-  ReserveResult,
   SetUserPlanResult,
   SetupResult,
   SpendByModelRow,
@@ -228,108 +227,6 @@ export class PostgresStore implements CreditStore {
       amount: dec(row.amount, amount),
       newBalance: dec(row.new_balance),
       lifetimePurchased: dec(row.lifetime_purchased),
-    };
-  }
-
-  async reserveCredits(
-    userId: string,
-    amount: Decimal,
-    operationType: string,
-    metadata?: CreditMetadata | null,
-    minBalance: Decimal = new Decimal(5),
-  ): Promise<ReserveResult> {
-    const rows = await this.callproc("reserve_credits", [
-      userId,
-      decParam(amount),
-      operationType,
-      JSON.stringify(metadata ?? {}),
-      decParam(minBalance),
-    ]);
-
-    if (!rows || rows.length === 0) {
-      return {
-        reservationId: "",
-        userId,
-        amount: ZERO,
-        balance: ZERO,
-        reservedTotal: ZERO,
-        error: "no result",
-      };
-    }
-
-    const row = (rows[0] as Record<string, unknown>) ?? {};
-    if ("error" in row) {
-      return {
-        reservationId: "",
-        userId,
-        amount: ZERO,
-        balance: dec(row.balance),
-        reservedTotal: dec(row.reserved),
-        error: String(row.error),
-      };
-    }
-
-    return {
-      reservationId: String(row.reservation_id ?? ""),
-      userId: String(row.user_id ?? userId),
-      amount: dec(row.amount),
-      balance: dec(row.balance),
-      reservedTotal: dec(row.reserved),
-    };
-  }
-
-  async deductCredits(
-    userId: string,
-    reservationId: string,
-    amount: Decimal,
-    idempotencyKey?: string | null,
-    metadata?: CreditMetadata | null,
-  ): Promise<DeductionResult> {
-    const meta: Record<string, unknown> = { ...(metadata ?? {}) };
-    if (idempotencyKey) meta.idempotency_key = idempotencyKey;
-
-    const rows = await this.callproc("deduct_credits", [
-      userId,
-      reservationId,
-      decParam(amount),
-      JSON.stringify(meta),
-    ]);
-
-    if (!rows || rows.length === 0) {
-      return {
-        transactionId: "",
-        userId,
-        amount: amount.negated(),
-        allowanceConsumed: ZERO,
-        balanceAfter: ZERO,
-        idempotent: false,
-        capWarning: null,
-        error: "no result",
-      };
-    }
-
-    const row = (rows[0] as Record<string, unknown>) ?? {};
-    if ("error" in row) {
-      return {
-        transactionId: "",
-        userId,
-        amount: amount.negated(),
-        allowanceConsumed: ZERO,
-        balanceAfter: dec(row.new_balance),
-        idempotent: false,
-        capWarning: null,
-        error: String(row.error),
-      };
-    }
-
-    return {
-      transactionId: String(row.id ?? ""),
-      userId: String(row.user_id ?? userId),
-      amount: dec(row.amount, amount.negated()),
-      allowanceConsumed: ZERO,
-      balanceAfter: dec(row.new_balance),
-      idempotent: Boolean(row.idempotent),
-      capWarning: null,
     };
   }
 

@@ -27,7 +27,6 @@ import type {
   PricingConfigResult,
   RefundResult,
   ReleaseResult,
-  ReserveResult,
   SetUserPlanResult,
   SetupResult,
   SpendByModelRow,
@@ -65,13 +64,11 @@ interface TransactionRecord {
 }
 
 /**
- * Internal reservation/lease record.
- *
- * The legacy ``reserveCredits``/``deductCredits`` path uses the base fields and
- * keeps ``status='active'``. The lease lifecycle (``createLease``/``settleLease``/
- * ``releaseLease``/``renewLease``) additionally drives ``status`` through
- * ``active → settled | released | expired`` and records the resolved
- * ``billingMode``/``overdraftFloor`` plus the settling transaction id.
+ * Internal reservation/lease record used by the lease lifecycle
+ * (``createLease``/``settleLease``/``releaseLease``/``renewLease``).
+ * ``status`` is driven through ``active → settled | released | expired``.
+ * ``billingMode``/``overdraftFloor`` record the resolved admission policy;
+ * ``settleTxId`` links to the settling transaction.
  */
 interface ReservationRecord {
   id: string;
@@ -85,9 +82,6 @@ interface ReservationRecord {
   overdraftFloor: Decimal | null;
   settleTxId: string | null;
 }
-
-/** Default reservation TTL (seconds) — matches the SQL `credit_reservations` default. */
-const RESERVATION_TTL_MS = 10 * 60 * 1000;
 
 /** Default lease TTL (seconds) for the lease lifecycle (interface plan §3). */
 const DEFAULT_LEASE_TTL_SECONDS = 600;
@@ -235,177 +229,6 @@ export class MemoryStore implements CreditStore {
       if (v != null) out[k] = v;
     }
     return out;
-  }
-
-  /** Remove expired reservations for a user (keeps the active-reservation sum honest). */
-  private pruneReservations(userId: string): void {
-    const now = this.now();
-    for (const [id, r] of this.reservations) {
-      if (r.userId === userId && r.expiresAt <= now) {
-        this.reservations.delete(id);
-      }
-    }
-  }
-
-  async reserveCredits(
-    userId: string,
-    amount: Decimal,
-    operationType: string,
-    metadata?: CreditMetadata | null,
-    minBalance: Decimal = new Decimal(5),
-  ): Promise<ReserveResult> {
-    // ── critical section (synchronous; no awaits) ──
-    if (!amount.isFinite() || amount.lte(0)) {
-      return {
-        reservationId: "",
-        userId,
-        amount: ZERO,
-        balance: this.balance(userId),
-        reservedTotal: ZERO,
-        error: "invalid_amount",
-      };
-    }
-
-    this.pruneReservations(userId);
-
-    const balance = this.balance(userId);
-    let reservedTotal = ZERO;
-    for (const r of this.reservations.values()) {
-      if (r.userId === userId) reservedTotal = reservedTotal.plus(r.amount);
-    }
-
-    const available = balance.minus(reservedTotal);
-    // Canonical rule (contract §3): REJECT (do not cap) if reserving the full
-    // amount would push available below min_balance.
-    if (available.minus(amount).lt(minBalance)) {
-      return {
-        reservationId: "",
-        userId,
-        amount,
-        balance,
-        reservedTotal,
-        error: "insufficient_credits",
-      };
-    }
-
-    const rid = randomUUID();
-    this.reservations.set(rid, {
-      id: rid,
-      userId,
-      amount,
-      operationType,
-      metadata: metadata ? this.cleanMetadata(metadata) : undefined,
-      expiresAt: new Date(this.now().getTime() + RESERVATION_TTL_MS),
-      status: "active",
-      billingMode: "strict",
-      overdraftFloor: null,
-      settleTxId: null,
-    });
-    return {
-      reservationId: rid,
-      userId,
-      amount,
-      balance,
-      reservedTotal: reservedTotal.plus(amount),
-    };
-  }
-
-  async deductCredits(
-    userId: string,
-    reservationId: string,
-    amount: Decimal,
-    idempotencyKey?: string | null,
-    metadata?: CreditMetadata | null,
-  ): Promise<DeductionResult> {
-    // ── critical section (synchronous; no awaits) ──
-    // Idempotency-first (user-scoped).
-    if (idempotencyKey) {
-      const existing = this.transactions.find(
-        (t) => t.userId === userId && t.metadata?.["idempotencyKey"] === idempotencyKey,
-      );
-      if (existing) {
-        return {
-          transactionId: existing.id,
-          userId,
-          amount: existing.amount,
-          allowanceConsumed: ZERO,
-          balanceAfter: this.balance(userId),
-          idempotent: true,
-          capWarning: null,
-        };
-      }
-    }
-
-    if (!amount.isFinite() || amount.lte(0)) {
-      return {
-        transactionId: "",
-        userId,
-        amount: ZERO,
-        allowanceConsumed: ZERO,
-        balanceAfter: this.balance(userId),
-        idempotent: false,
-        capWarning: null,
-        error: "invalid_amount",
-      };
-    }
-
-    // C3: the reservation is the authority on the maximum deductible amount.
-    // It must exist, belong to this user, and be unexpired. Clamp amount to it.
-    const reservation = this.reservations.get(reservationId);
-    if (!reservation || reservation.userId !== userId || reservation.expiresAt <= this.now()) {
-      return {
-        transactionId: "",
-        userId,
-        amount: ZERO,
-        allowanceConsumed: ZERO,
-        balanceAfter: this.balance(userId),
-        idempotent: false,
-        capWarning: null,
-        error: "not_found",
-      };
-    }
-
-    const deductAmount = Decimal.min(amount, reservation.amount);
-
-    const current = this.balance(userId);
-    if (current.lt(deductAmount)) {
-      return {
-        transactionId: "",
-        userId,
-        amount: deductAmount.negated(),
-        allowanceConsumed: ZERO,
-        balanceAfter: current,
-        idempotent: false,
-        capWarning: null,
-        error: "insufficient_credits",
-      };
-    }
-
-    this.balances.set(userId, current.minus(deductAmount));
-    this.reservations.delete(reservationId);
-
-    const txMeta = metadata ? this.cleanMetadata(metadata) : {};
-    if (idempotencyKey) txMeta["idempotencyKey"] = idempotencyKey;
-
-    const txId = randomUUID();
-    this.transactions.push({
-      id: txId,
-      userId,
-      amount: deductAmount.negated(),
-      type: "usage",
-      metadata: txMeta,
-      createdAt: this.now(),
-    });
-
-    return {
-      transactionId: txId,
-      userId,
-      amount: deductAmount.negated(),
-      allowanceConsumed: ZERO,
-      balanceAfter: current.minus(deductAmount),
-      idempotent: false,
-      capWarning: null,
-    };
   }
 
   /**

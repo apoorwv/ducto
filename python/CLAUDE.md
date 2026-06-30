@@ -29,7 +29,7 @@ Python 3.11+, Pydantic v2 (models/validation), `decimal.Decimal` for all money (
 CreditManager
   ├── PricingEngine          (calculate cost from UsageMetrics)
   ├── CreditStore            (ABC — memory / postgres / supabase)
-  │     ├── deduct_with_allowance()   atomic: allowance→cap→floor→debit
+  │     ├── deduct_with_allowance()   atomic: allowance→cap→floor→debit (internal core)
   │     ├── create_lease / settle_lease / release_lease / renew_lease
   │     └── ... (30+ abstract methods)
   └── CreditEventEmitter     (optional pub/sub)

@@ -88,17 +88,6 @@ class AddCreditsResult(BaseModel):
     lifetime_purchased: Decimal = Decimal(0)
 
 
-class ReserveResult(BaseModel):
-    """Result of reserving credits for an operation."""
-
-    reservation_id: str
-    user_id: str
-    amount: Decimal
-    balance: Decimal = Decimal(0)
-    reserved_total: Decimal = Decimal(0)
-    error: str | None = None
-
-
 class LeaseResult(BaseModel):
     """Result of acquiring (or renewing) a lease — the atomic admission hold.
 

@@ -81,10 +81,6 @@ Add credits to a user's account. `type` defaults to `"adjustment"`. `expiresAt` 
 
 Returns `{ userId, balance, lifetimePurchased }` (money as `Decimal`).
 
-### `reserveCredits(userId: string, amount: Decimal | number, operationType?: string, metadata?: CreditMetadata | null, minBalance?: Decimal | number | null): Promise<ReserveResult>`
-
-Legacy hold via `credit_reservations`. Prefer the lease lifecycle (`reserve` / `settle` / `release`) for new code. Returns `{ reservationId, userId, amount, balance, reservedTotal, error? }`.
-
 ### `deduct(userId: string, metrics: UsageMetrics, idempotencyKey?: string | null, metadata?: CreditMetadata | null): Promise<DeductionResult>`
 
 Calculates the cost (`breakdown.total`, exact `Decimal`, no truncation) and charges it in one atomic `deductWithAllowance` transaction: idempotency check first → consume free allowance → enforce spend caps on the net → balance-floor check → debit. Resolves to a `DeductionResult` whose `amount` is the **net** charge after allowance, with `allowanceConsumed`, `balanceAfter`, `idempotent` and `capWarning`. Throws `InsufficientCreditsError` (floor breached) or `CapReachedError` (deny cap). A zero/negative cost short-circuits to a zero-amount result.

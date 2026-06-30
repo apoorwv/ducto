@@ -322,8 +322,7 @@ class TestRefund:
         store = MemoryStore()
         store.add_credits("user_1", Decimal("100"), "purchase")
         # Deduct 30
-        reserve = store.reserve_credits("user_1", Decimal("30"), "usage")
-        deduct = store.deduct_credits("user_1", reserve.reservation_id, Decimal("30"))
+        deduct = store.deduct_with_allowance("user_1", Decimal("30"))
         assert store.get_balance("user_1").balance == 70
 
         refund = store.refund_credits(deduct.transaction_id)
@@ -334,8 +333,7 @@ class TestRefund:
     def test_partial_refund(self) -> None:
         store = MemoryStore()
         store.add_credits("user_1", Decimal("100"))
-        reserve = store.reserve_credits("user_1", Decimal("50"), "usage")
-        deduct = store.deduct_credits("user_1", reserve.reservation_id, Decimal("50"))
+        deduct = store.deduct_with_allowance("user_1", Decimal("50"))
 
         refund = store.refund_credits(deduct.transaction_id, amount=Decimal("20"))
         assert refund.error is None
@@ -345,8 +343,7 @@ class TestRefund:
     def test_double_refund_returns_error(self) -> None:
         store = MemoryStore()
         store.add_credits("user_1", Decimal("100"))
-        reserve = store.reserve_credits("user_1", Decimal("30"), "usage")
-        deduct = store.deduct_credits("user_1", reserve.reservation_id, Decimal("30"))
+        deduct = store.deduct_with_allowance("user_1", Decimal("30"))
 
         r1 = store.refund_credits(deduct.transaction_id)
         assert r1.error is None
@@ -370,12 +367,9 @@ class TestUsageAnalytics:
         store.add_credits("user_1", Decimal("1000"))
         store.add_credits("user_2", Decimal("2000"))
 
-        r1 = store.reserve_credits("user_1", Decimal("100"), "usage")
-        store.deduct_credits("user_1", r1.reservation_id, Decimal("100"))
-        r2 = store.reserve_credits("user_1", Decimal("50"), "usage")
-        store.deduct_credits("user_1", r2.reservation_id, Decimal("50"))
-        r3 = store.reserve_credits("user_2", Decimal("200"), "usage")
-        store.deduct_credits("user_2", r3.reservation_id, Decimal("200"))
+        store.deduct_with_allowance("user_1", Decimal("100"))
+        store.deduct_with_allowance("user_1", Decimal("50"))
+        store.deduct_with_allowance("user_2", Decimal("200"))
 
         now = datetime.now(UTC)
         rows = store.spend_by_user(now - timedelta(seconds=10), now + timedelta(seconds=10))
@@ -394,10 +388,8 @@ class TestUsageAnalytics:
 
         from ducto.interface.models import CreditMetadata
 
-        r1 = store.reserve_credits("user_1", Decimal("100"), "usage")
-        store.deduct_credits("user_1", r1.reservation_id, Decimal("100"), metadata=CreditMetadata(model="gpt-4"))
-        r2 = store.reserve_credits("user_1", Decimal("50"), "usage")
-        store.deduct_credits("user_1", r2.reservation_id, Decimal("50"), metadata=CreditMetadata(model="claude-3"))
+        store.deduct_with_allowance("user_1", Decimal("100"), model="gpt-4")
+        store.deduct_with_allowance("user_1", Decimal("50"), model="claude-3")
 
         now = datetime.now(UTC)
         rows = store.spend_by_model(now - timedelta(seconds=10), now + timedelta(seconds=10))
@@ -408,8 +400,7 @@ class TestUsageAnalytics:
     def test_empty_time_window_returns_empty(self) -> None:
         store = MemoryStore()
         store.add_credits("user_1", Decimal("100"))
-        r = store.reserve_credits("user_1", Decimal("10"), "usage")
-        store.deduct_credits("user_1", r.reservation_id, Decimal("10"))
+        store.deduct_with_allowance("user_1", Decimal("10"))
 
         rows = store.spend_by_user(
             datetime(2020, 1, 1),
@@ -424,8 +415,7 @@ class TestUsageAnalytics:
         store.add_credits("user_3", Decimal("1000"))
 
         for uid, amt in [("user_1", Decimal("300")), ("user_2", Decimal("200")), ("user_3", Decimal("100"))]:
-            r = store.reserve_credits(uid, amt, "usage")
-            store.deduct_credits(uid, r.reservation_id, amt)
+            store.deduct_with_allowance(uid, amt)
 
         now = datetime.now(UTC)
         top = store.top_users(2, now - timedelta(seconds=10), now + timedelta(seconds=10))
@@ -438,10 +428,8 @@ class TestUsageAnalytics:
         store.add_credits("user_2", Decimal("1000"))
         from ducto.interface.models import CreditMetadata
 
-        r1 = store.reserve_credits("user_1", Decimal("50"), "usage")
-        store.deduct_credits("user_1", r1.reservation_id, Decimal("50"), metadata=CreditMetadata(model="gpt-4"))
-        r2 = store.reserve_credits("user_2", Decimal("30"), "usage")
-        store.deduct_credits("user_2", r2.reservation_id, Decimal("30"), metadata=CreditMetadata(model="claude-3"))
+        store.deduct_with_allowance("user_1", Decimal("50"), model="gpt-4")
+        store.deduct_with_allowance("user_2", Decimal("30"), model="claude-3")
 
         now = datetime.now(UTC)
         stats = store.aggregate_stats(now - timedelta(seconds=10), now + timedelta(seconds=10))
@@ -460,8 +448,7 @@ class TestUsageAnalytics:
     def test_daily_spend_bucketing_correct(self) -> None:
         store = MemoryStore()
         store.add_credits("user_1", Decimal("1000"))
-        r = store.reserve_credits("user_1", Decimal("75"), "usage")
-        store.deduct_credits("user_1", r.reservation_id, Decimal("75"))
+        store.deduct_with_allowance("user_1", Decimal("75"))
 
         now = datetime.now(UTC)
         rows = store.daily_spend(now - timedelta(days=1), now + timedelta(days=1))
@@ -477,8 +464,7 @@ class TestUsageAnalytics:
         store = MemoryStore()
         store.add_credits("user_1", Decimal("1000"), "purchase", CreditMetadata(reference_id="purchase-1"))
         store.add_credits("user_1", Decimal("500"), "signup_bonus", CreditMetadata(reference_id="bonus-1"))
-        r = store.reserve_credits("user_1", Decimal("200"), "usage")
-        store.deduct_credits("user_1", r.reservation_id, Decimal("200"), metadata=CreditMetadata(model="gpt-4"))
+        store.deduct_with_allowance("user_1", Decimal("200"), model="gpt-4")
         store.add_credits("user_2", Decimal("999"), "purchase")
         result = store.list_user_transactions("user_1")
         assert len(result) == 3
@@ -490,8 +476,7 @@ class TestUsageAnalytics:
         store = MemoryStore()
         store.add_credits("user_1", Decimal("1000"), "purchase")
         store.add_credits("user_1", Decimal("500"), "signup_bonus")
-        r = store.reserve_credits("user_1", Decimal("200"), "usage")
-        store.deduct_credits("user_1", r.reservation_id, Decimal("200"), metadata=CreditMetadata(model="gpt-4"))
+        store.deduct_with_allowance("user_1", Decimal("200"), model="gpt-4")
         result = store.list_user_transactions("user_1", types=["usage"])
         assert len(result) == 1
         assert result[0].type == "usage"
@@ -796,33 +781,6 @@ class TestSpendCaps:
         assert not result.capped
 
 
-# ── ST1: Expired reservation + deductCredits ──────────────────────────────────
-
-
-class TestExpiredReservation:
-    def test_deduct_after_reservation_expired_returns_not_found(self) -> None:
-        """ST1 — deduct_credits against an expired reservation returns error='not_found'."""
-        store = MemoryStore()
-        store.add_credits("user-1", Decimal("100"), "purchase")
-
-        # Reserve credits normally
-        reserve = store.reserve_credits("user-1", Decimal("30"), "usage")
-        assert reserve.error is None
-        rid = reserve.reservation_id
-
-        # Expire the reservation by backdating its expires_at
-        from datetime import UTC, timedelta
-
-        with store._lock:
-            store._reservations[rid].expires_at = datetime.now(UTC) - timedelta(minutes=11)
-
-        # Now deduct — the purge step in deduct_credits will remove the expired reservation
-        result = store.deduct_credits("user-1", rid, Decimal("30"))
-        assert result.error == "not_found"
-        # Balance is unchanged since deduction failed
-        assert store.get_balance("user-1").balance == Decimal("100")
-
-
 # ── ST2: Concurrent refund race on same transaction ────────────────────────────
 
 
@@ -834,8 +792,7 @@ class TestConcurrentRefund:
         store = MemoryStore()
         store.add_credits("user-1", Decimal("100"), "purchase")
 
-        reserve = store.reserve_credits("user-1", Decimal("40"), "usage")
-        deduct = store.deduct_credits("user-1", reserve.reservation_id, Decimal("40"))
+        deduct = store.deduct_with_allowance("user-1", Decimal("40"))
         tx_id = deduct.transaction_id
 
         results = []
@@ -876,8 +833,7 @@ class TestSweepBalanceCap:
         store.add_credits("user-1", Decimal("50"), "purchase")
 
         # Deduct 80 so balance = 70 (100 + 50 - 80)
-        reserve = store.reserve_credits("user-1", Decimal("80"), "usage", min_balance=Decimal("0"))
-        store.deduct_credits("user-1", reserve.reservation_id, Decimal("80"))
+        store.deduct_with_allowance("user-1", Decimal("80"), min_balance=Decimal("0"))
         assert store.get_balance("user-1").balance == Decimal("70")
 
         # Sweep: expired amount is 100 but balance is only 70 — should debit 70
@@ -925,8 +881,7 @@ class TestListUserTransactionsTypeFilter:
         # Add a purchase transaction
         store.add_credits("user-1", Decimal("100"), "purchase")
         # Add a usage (debit) transaction
-        reserve = store.reserve_credits("user-1", Decimal("20"), "usage")
-        store.deduct_credits("user-1", reserve.reservation_id, Decimal("20"))
+        store.deduct_with_allowance("user-1", Decimal("20"))
 
         result = store.list_user_transactions("user-1", types=["usage"])
         assert len(result) == 1
@@ -936,8 +891,7 @@ class TestListUserTransactionsTypeFilter:
         """ST5 — list_user_transactions with types=['purchase'] returns only purchase transactions."""
         store = MemoryStore()
         store.add_credits("user-1", Decimal("100"), "purchase")
-        reserve = store.reserve_credits("user-1", Decimal("20"), "usage")
-        store.deduct_credits("user-1", reserve.reservation_id, Decimal("20"))
+        store.deduct_with_allowance("user-1", Decimal("20"))
 
         result = store.list_user_transactions("user-1", types=["purchase"])
         assert len(result) == 1

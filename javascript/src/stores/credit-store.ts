@@ -23,7 +23,6 @@ import type {
   PricingConfigResult,
   RefundResult,
   ReleaseResult,
-  ReserveResult,
   SetUserPlanResult,
   SetupResult,
   SpendByModelRow,
@@ -65,20 +64,6 @@ export interface CreditStore {
     metadata?: CreditMetadata | null,
     expiresAt?: Date | null,
   ): Promise<AddCreditsResult>;
-  reserveCredits(
-    userId: string,
-    amount: Decimal,
-    operationType: string,
-    metadata?: CreditMetadata | null,
-    minBalance?: Decimal,
-  ): Promise<ReserveResult>;
-  deductCredits(
-    userId: string,
-    reservationId: string,
-    amount: Decimal,
-    idempotencyKey?: string | null,
-    metadata?: CreditMetadata | null,
-  ): Promise<DeductionResult>;
   /**
    * Atomically calculate-and-charge in one server-side transaction:
    * consume free allowance, enforce spend caps, apply the balance floor,

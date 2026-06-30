@@ -57,7 +57,6 @@ from ducto.interface.models import (
     PricingConfigData,
     RefundResult,
     ReleaseResult,
-    ReserveResult,
     SetupResult,
     SetUserPlanResult,
     SpendByModelRow,
@@ -317,25 +316,6 @@ class CreditManager:
         - ``True`` / numeric (incl. ``0``) / string (incl. ``""``) => ``has_feature=True``
         """
         return self._store.check_feature(user_id, feature)
-
-    def reserve_credits(
-        self,
-        user_id: str,
-        amount: Decimal | int,
-        operation_type: str = "usage",
-        metadata: CreditMetadata | None = None,
-        min_balance: Decimal | int | None = None,
-    ) -> ReserveResult:
-        """Reserve credits for an upcoming operation.
-
-        If ``min_balance`` is not specified, the engine's configured minimum
-        is used (defaults to ``Decimal(5)`` if no engine is loaded).
-        """
-        if min_balance is not None:
-            actual = Decimal(min_balance)
-        else:
-            actual = self._engine.min_balance if self._engine else Decimal(5)
-        return self._store.reserve_credits(user_id, Decimal(amount), operation_type, metadata, actual)
 
     # ── Lease lifecycle: atomic admission (interface plan §3/§4) ────────
 

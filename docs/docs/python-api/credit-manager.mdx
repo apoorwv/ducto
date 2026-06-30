@@ -88,10 +88,6 @@ Returns `AddCreditsResult` with `transaction_id`, `amount`, `new_balance`, `life
 
 Return `BalanceResult` with `balance` and `lifetime_purchased`.
 
-### `reserve_credits(user_id, amount, operation_type="usage", metadata=None, min_balance=None) -> ReserveResult`
-
-**Legacy admission path.** Reserve credits for a pending operation. Prefer the `reserve()`/`settle()`/`release()` lease lifecycle for new code. Returns `ReserveResult`; the `reservation_id` must be passed to `store.deduct_credits()` to finalize.
-
 ### `deduct(user_id, metrics, idempotency_key=None, metadata=None)`
 
 Calculates the cost (`breakdown.total`, exact `Decimal`, no truncation) and charges it in one atomic `deduct_with_allowance` transaction: idempotency check first → consume free allowance → enforce spend caps on the net → balance-floor check → debit. Returns a `DeductionResult` whose `amount` is the **net** charge after allowance, with `allowance_consumed`, `balance_after`, `idempotent` and `cap_warning`. Raises `InsufficientCreditsError` (floor breached) or `CapReachedError` (deny cap) on failure. A zero/negative cost short-circuits to a zero-amount result.

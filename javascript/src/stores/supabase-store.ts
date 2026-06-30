@@ -25,7 +25,6 @@ import type {
   PricingConfigResult,
   RefundResult,
   ReleaseResult,
-  ReserveResult,
   SetUserPlanResult,
   SetupResult,
   SpendByModelRow,
@@ -230,84 +229,6 @@ export class HttpxSupabaseStore implements CreditStore {
       amount: dec(row.amount, amount),
       newBalance: dec(row.new_balance),
       lifetimePurchased: dec(row.lifetime_purchased),
-    };
-  }
-
-  async reserveCredits(
-    userId: string,
-    amount: Decimal,
-    operationType: string,
-    metadata?: CreditMetadata | null,
-    minBalance: Decimal = new Decimal(5),
-  ): Promise<ReserveResult> {
-    const row = await this.rpc("reserve_credits", {
-      p_user_id: userId,
-      p_amount: decParam(amount),
-      p_operation_type: operationType,
-      p_metadata: metadata ?? {},
-      p_min_balance: decParam(minBalance),
-    });
-
-    const code = this.errorCode(row);
-    if (code) {
-      return {
-        reservationId: "",
-        userId,
-        amount: ZERO,
-        balance: dec(row.balance),
-        reservedTotal: dec(row.reserved),
-        error: code,
-      };
-    }
-
-    return {
-      reservationId: String(row.reservation_id ?? ""),
-      userId: String(row.user_id ?? userId),
-      amount: dec(row.amount),
-      balance: dec(row.balance),
-      reservedTotal: dec(row.reserved),
-    };
-  }
-
-  async deductCredits(
-    userId: string,
-    reservationId: string,
-    amount: Decimal,
-    idempotencyKey?: string | null,
-    metadata?: CreditMetadata | null,
-  ): Promise<DeductionResult> {
-    const meta: Record<string, unknown> = { ...(metadata ?? {}) };
-    if (idempotencyKey) meta.idempotency_key = idempotencyKey;
-
-    const row = await this.rpc("deduct_credits", {
-      p_user_id: userId,
-      p_reservation_id: reservationId,
-      p_amount: decParam(amount),
-      p_metadata: meta,
-    });
-
-    const code = this.errorCode(row);
-    if (code) {
-      return {
-        transactionId: "",
-        userId,
-        amount: amount.negated(),
-        allowanceConsumed: ZERO,
-        balanceAfter: dec(row.new_balance),
-        idempotent: false,
-        capWarning: null,
-        error: code,
-      };
-    }
-
-    return {
-      transactionId: String(row.id ?? ""),
-      userId: String(row.user_id ?? userId),
-      amount: dec(row.amount, amount.negated()),
-      allowanceConsumed: ZERO,
-      balanceAfter: dec(row.new_balance),
-      idempotent: Boolean(row.idempotent),
-      capWarning: null,
     };
   }
 

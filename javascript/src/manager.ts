@@ -30,7 +30,6 @@ import type {
   PricingConfigData,
   RefundResult,
   ReleaseResult,
-  ReserveResult,
   SetupResult,
   SpendByModelRow,
   SpendByUserRow,
@@ -351,24 +350,6 @@ export class CreditManager {
       }
     }
     return result;
-  }
-
-  /** Reserve credits for an upcoming operation. */
-  async reserveCredits(
-    userId: string,
-    amount: Decimal | number,
-    operationType = "usage",
-    metadata?: CreditMetadata | null,
-    minBalance?: Decimal | number | null,
-  ): Promise<ReserveResult> {
-    const actual = minBalance != null ? toDecimal(minBalance) : this.minBalanceDecimal();
-    return await this.store.reserveCredits(
-      userId,
-      toDecimal(amount),
-      operationType,
-      metadata,
-      actual,
-    );
   }
 
   // ── Lease lifecycle: atomic admission (interface plan §3/§4) ────────

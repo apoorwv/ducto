@@ -56,7 +56,6 @@ export type {
   PricingConfigResult,
   RefundResult,
   ReleaseResult,
-  ReserveResult,
   SetUserPlanResult,
   SetupResult,
   SpendByModelRow,

@@ -83,52 +83,6 @@ describe("PostgresStore", () => {
     expect(calls[0].params[1]).toBe("100.5");
   });
 
-  it("reserveCredits returns no result error for empty", async () => {
-    const store = new PostgresStore("postgresql://localhost/db", makeMockPool([]));
-    const result = await store.reserveCredits("user-1", D(50), "usage");
-    expect(result.error).toBe("no result");
-  });
-
-  it("reserveCredits parses row result", async () => {
-    const store = new PostgresStore(
-      "postgresql://localhost/db",
-      makeMockPool([
-        { reservation_id: "res-1", user_id: "user-1", amount: "50", balance: "150", reserved: "50" },
-      ]),
-    );
-    const result = await store.reserveCredits("user-1", D(50), "usage");
-    expect(result.reservationId).toBe("res-1");
-    expect(result.amount.toString()).toBe("50");
-  });
-
-  it("reserveCredits maps error envelope", async () => {
-    const store = new PostgresStore(
-      "postgresql://localhost/db",
-      makeMockPool([{ error: "insufficient_credits" }]),
-    );
-    const result = await store.reserveCredits("user-1", D(50), "usage");
-    expect(result.error).toBe("insufficient_credits");
-  });
-
-  it("deductCredits returns error for empty results", async () => {
-    const store = new PostgresStore("postgresql://localhost/db", makeMockPool([]));
-    const result = await store.deductCredits("user-1", "rid", D(50));
-    expect(result.error).toBe("no result");
-  });
-
-  it("deductCredits parses row result", async () => {
-    const store = new PostgresStore(
-      "postgresql://localhost/db",
-      makeMockPool([
-        { id: "tx-1", user_id: "user-1", amount: "-50", new_balance: "50", idempotent: false },
-      ]),
-    );
-    const result = await store.deductCredits("user-1", "rid", D(50));
-    expect(result.transactionId).toBe("tx-1");
-    expect(result.amount.toString()).toBe("-50");
-    expect(result.balanceAfter.toString()).toBe("50");
-  });
-
   describe("deductWithAllowance", () => {
     it("calls deduct_with_allowance with all params (decimal strings)", async () => {
       const { ctor, calls } = makeRecordingPool([

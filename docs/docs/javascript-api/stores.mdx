@@ -15,7 +15,7 @@ Full `CreditStore` interface. All money arguments and result fields are `Decimal
 | Category | Methods |
 |----------|---------|
 | Setup | `setup(databaseUrl?)` |
-| Balances | `getBalance(userId)`, `addCredits(userId, amount, type?, metadata?, expiresAt?)`, `deductWithAllowance(userId, amount, options?)`, `reserveCredits(userId, amount, opType?, metadata?, minBalance?)`, `deductCredits(userId, reservationId, amount, idempotencyKey?, metadata?)` |
+| Balances | `getBalance(userId)`, `addCredits(userId, amount, type?, metadata?, expiresAt?)`, `deductWithAllowance(userId, amount, options?)` |
 | Leases | `createLease(userId, amount, operationType, options?)`, `settleLease(userId, leaseId, amount, options?)`, `releaseLease(userId, leaseId)`, `renewLease(userId, leaseId, ttlSeconds)`, `getAvailable(userId)` |
 | Pricing | `getActivePricing()`, `setActivePricing(config, label?)` |
 | Plans | `getUserPlan(userId)`, `setUserPlan(userId, planId)`, `checkFeature(userId, feature)`, `checkAllowance(userId)`, `incrementUsageWindow(userId, planId, amount)` |

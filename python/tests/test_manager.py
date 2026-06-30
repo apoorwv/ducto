@@ -287,20 +287,6 @@ class TestGetBalance:
         assert balance.balance == Decimal("99")  # 100 - 1
 
 
-class TestReserve:
-    def test_reserve_reduces_available(self, manager: CreditManager) -> None:
-        manager.add_credits("user_1", 100)
-
-        r1 = manager.reserve_credits("user_1", 30)
-        assert r1.error is None
-        assert r1.amount == Decimal("30")
-
-        # Requesting more than available (minus min_balance) returns an error.
-        r2 = manager.reserve_credits("user_1", 80)  # 80 > 70-5 → insufficient credits
-        assert r2.error == "insufficient_credits"
-        assert r2.amount == Decimal(0)
-
-
 class TestPlanAllowance:
     def test_full_allowance_covers_cost(self) -> None:
         """Deduct with full plan allowance skips balance deduction."""
@@ -1300,38 +1286,6 @@ class TestDeductRefundThenDeductAgain:
         # Step 5: verify no over_refund error — the second deduct was a fresh charge
         assert r2.transaction_id != r1.transaction_id
         assert not r2.idempotent
-
-
-class TestReservationExpiresAndDeductFails:
-    """M4 — Deducting against an expired reservation returns not_found."""
-
-    def test_reservation_expires_and_deduct_fails(self) -> None:
-        store = MemoryStore()
-        mgr = CreditManager(store=store)
-        mgr.publish_pricing_from_dict({"models": {"_default": "input_tokens * 1"}, "min_balance": 0})
-        mgr.add_credits("user-1", 100)
-
-        # Step 1: Reserve 5 credits — succeeds normally.
-        reserve_result = mgr.reserve_credits("user-1", 5)
-        assert reserve_result.error is None
-        rid = reserve_result.reservation_id
-
-        # Step 2: Manually expire the reservation by backdating its expires_at.
-        # MemoryStore._purge_expired_reservations() removes reservations where
-        # expires_at <= now, so setting to a past timestamp triggers expiry on the
-        # next deduct_credits() call.
-        with store._lock:
-            rec = store._reservations.get(rid)
-            assert rec is not None, "Reservation should exist before expiry"
-            rec.expires_at = _utcnow() - timedelta(seconds=1)
-
-        # Step 3: Attempt to deduct against the expired reservation → not_found.
-        result = store.deduct_credits("user-1", rid, Decimal("5"))
-        assert result.error == "not_found", (
-            f"Expected 'not_found' after expiry, got {result.error!r}"
-        )
-        # Balance must be untouched.
-        assert mgr.get_balance("user-1").balance == Decimal("100")
 
 
 class TestLowBalanceThresholdReResolution:

@@ -80,95 +80,6 @@ describe("MemoryStore", () => {
     });
   });
 
-  describe("credit lifecycle: add → reserve → deduct", () => {
-    it("completes full lifecycle", async () => {
-      await store.addCredits("user-1", D(100), "purchase");
-      const reserve = await store.reserveCredits("user-1", D(30), "usage");
-      expect(reserve.error).toBeUndefined();
-      expect(reserve.amount.toString()).toBe("30");
-
-      const deduct = await store.deductCredits("user-1", reserve.reservationId, D(30));
-      expect(deduct.error).toBeUndefined();
-      expect(deduct.amount.toString()).toBe("-30");
-
-      const balance = await store.getBalance("user-1");
-      expect(balance.balance.toString()).toBe("70");
-    });
-
-    it("rejects insufficient credits", async () => {
-      await store.addCredits("user-1", D(10));
-      const result = await store.reserveCredits("user-1", D(100), "usage");
-      expect(result.error).toBe("insufficient_credits");
-    });
-
-    it("rejects reservation below min_balance threshold", async () => {
-      await store.addCredits("user-1", D(20));
-      const result = await store.reserveCredits("user-1", D(10), "usage", null, D(15));
-      expect(result.error).toBe("insufficient_credits");
-    });
-
-    it("deduct without a valid reservation is rejected (C3)", async () => {
-      await store.addCredits("user-1", D(100));
-      const result = await store.deductCredits("user-1", "no-such-reservation", D(10));
-      expect(result.error).toBe("not_found");
-      expect((await store.getBalance("user-1")).balance.toString()).toBe("100");
-    });
-
-    it("clamps the deducted amount to the reserved ceiling (C3)", async () => {
-      await store.addCredits("user-1", D(100));
-      const reserve = await store.reserveCredits("user-1", D(10), "usage");
-      // Try to deduct 1000 against a 10-credit reservation.
-      const deduct = await store.deductCredits("user-1", reserve.reservationId, D(1000));
-      expect(deduct.error).toBeUndefined();
-      expect(deduct.amount.toString()).toBe("-10");
-      expect((await store.getBalance("user-1")).balance.toString()).toBe("90");
-    });
-
-    it("rejects deduct against another user's reservation (C3)", async () => {
-      await store.addCredits("user-1", D(100));
-      await store.addCredits("user-2", D(100));
-      const reserve = await store.reserveCredits("user-1", D(10), "usage");
-      const result = await store.deductCredits("user-2", reserve.reservationId, D(10));
-      expect(result.error).toBe("not_found");
-    });
-
-    it("handles idempotent deductions", async () => {
-      await store.addCredits("user-1", D(100));
-      const reserve = await store.reserveCredits("user-1", D(50), "usage");
-      const deduct1 = await store.deductCredits("user-1", reserve.reservationId, D(50), "idem-1");
-      expect(deduct1.idempotent).toBe(false);
-
-      // Replay with same idempotency key
-      const reserve2 = await store.reserveCredits("user-1", D(50), "usage");
-      const deduct2 = await store.deductCredits("user-1", reserve2.reservationId, D(50), "idem-1");
-      expect(deduct2.idempotent).toBe(true);
-      // Balance only debited once.
-      expect((await store.getBalance("user-1")).balance.toString()).toBe("50");
-    });
-
-    it("idempotency is user-scoped (no cross-user collision)", async () => {
-      await store.addCredits("user-1", D(100));
-      await store.addCredits("user-2", D(100));
-      const r1 = await store.reserveCredits("user-1", D(10), "usage");
-      await store.deductCredits("user-1", r1.reservationId, D(10), "shared-key");
-      const r2 = await store.reserveCredits("user-2", D(20), "usage");
-      const d2 = await store.deductCredits("user-2", r2.reservationId, D(20), "shared-key");
-      // Same key, different user → a real deduction, not a replay.
-      expect(d2.idempotent).toBe(false);
-      expect((await store.getBalance("user-2")).balance.toString()).toBe("80");
-    });
-
-    it("handles concurrent reservations", async () => {
-      await store.addCredits("user-1", D(100));
-      const r1 = await store.reserveCredits("user-1", D(60), "usage");
-      expect(r1.error).toBeUndefined();
-
-      // Second reservation should fail — only 40 available, needs 60
-      const r2 = await store.reserveCredits("user-1", D(60), "usage");
-      expect(r2.error).toBe("insufficient_credits");
-    });
-  });
-
   describe("deductWithAllowance (atomic charge)", () => {
     async function seedPlan(freeAllowance: number, userId = "user-1") {
       const config: PricingConfigData = {
@@ -493,8 +404,7 @@ describe("MemoryStore", () => {
   describe("refunds", () => {
     async function makeUsageTx(userId: string, amount: number) {
       await store.addCredits(userId, D(1000), "purchase");
-      const reserve = await store.reserveCredits(userId, D(amount), "usage");
-      return store.deductCredits(userId, reserve.reservationId, D(amount));
+      return store.deductWithAllowance(userId, D(amount), { minBalance: D(0) });
     }
 
     it("refunds a full deduction and restores balance", async () => {
@@ -625,16 +535,11 @@ describe("MemoryStore", () => {
 
   describe("usage analytics (Decimal)", () => {
     async function deduct(userId: string, amount: number, model?: string) {
-      // Add headroom above the reservation min_balance floor (default 5).
       await store.addCredits(userId, D(amount + 100), "purchase");
-      const r = await store.reserveCredits(userId, D(amount), "usage");
-      return store.deductCredits(
-        userId,
-        r.reservationId,
-        D(amount),
-        null,
-        model ? { model } : null,
-      );
+      return store.deductWithAllowance(userId, D(amount), {
+        minBalance: D(0),
+        model: model ?? null,
+      });
     }
 
     it("aggregateStats returns correct aggregates", async () => {
@@ -921,12 +826,10 @@ describe("MemoryStore", () => {
 
   describe("listUserTransactions", () => {
     beforeEach(async () => {
-      await store.addCredits("user-1", D(1000), "purchase", { ref: "purchase-1" });
+      await store.addCredits("user-1", D(1500), "purchase", { ref: "purchase-1" });
       await store.addCredits("user-1", D(500), "signup_bonus", { ref: "bonus-1" });
-      const r1 = await store.reserveCredits("user-1", D(200), "usage", { model: "gpt-4" });
-      await store.deductCredits("user-1", r1.reservationId, D(200), null, { model: "gpt-4" });
-      const r2 = await store.reserveCredits("user-1", D(50), "usage", { model: "claude-3" });
-      await store.deductCredits("user-1", r2.reservationId, D(50), null, { model: "claude-3" });
+      await store.deductWithAllowance("user-1", D(200), { minBalance: D(0), model: "gpt-4" });
+      await store.deductWithAllowance("user-1", D(50), { minBalance: D(0), model: "claude-3" });
       await store.addCredits("user-2", D(999), "purchase");
     });
 
@@ -981,34 +884,11 @@ describe("MemoryStore", () => {
   describe("listUsageEvents", () => {
     it("returns only usage events for the user", async () => {
       await store.addCredits("user-1", D(1000), "purchase");
-      const r1 = await store.reserveCredits("user-1", D(50), "usage");
-      await store.deductCredits("user-1", r1.reservationId, D(50));
+      await store.deductWithAllowance("user-1", D(50), { minBalance: D(0) });
       const result = await store.listUsageEvents("user-1");
       expect(result.total).toBe(1);
       expect(result.items[0].type).toBe("usage");
       expect(result.items[0].amount.toString()).toBe("-50");
-    });
-  });
-
-  // ── MS1: Expired reservation + deductCredits ──────────────────────────
-  describe("MS1 — expired reservation returns not_found", () => {
-    it("deductCredits returns not_found for an expired reservation", async () => {
-      const T0 = new Date("2026-01-01T00:00:00.000Z");
-      // TTL is 10 minutes; advance well past it
-      const AFTER_TTL = new Date("2026-01-01T00:11:00.000Z");
-
-      store.setClock(() => T0);
-      await store.addCredits("user-1", D(100));
-      const reserve = await store.reserveCredits("user-1", D(30), "usage");
-      expect(reserve.error).toBeUndefined();
-
-      // Advance clock past the reservation TTL
-      store.setClock(() => AFTER_TTL);
-
-      const result = await store.deductCredits("user-1", reserve.reservationId, D(30));
-      expect(result.error).toBe("not_found");
-      // Balance must be unchanged
-      expect((await store.getBalance("user-1")).balance.toString()).toBe("100");
     });
   });
 
@@ -1069,34 +949,6 @@ describe("MemoryStore", () => {
     });
   });
 
-  // ── MS4: Concurrent refund race on same transaction ───────────────────
-  describe("MS4 — concurrent partial refunds are race-safe", () => {
-    it("two concurrent 30-credit refunds on a 40-credit deduction: only one succeeds", async () => {
-      await store.addCredits("user-1", D(1000), "purchase");
-      const reserve = await store.reserveCredits("user-1", D(40), "usage");
-      const deduct = await store.deductCredits("user-1", reserve.reservationId, D(40));
-      expect(deduct.error).toBeUndefined();
-
-      // Attempt two partial refunds of 30 concurrently
-      const [r1, r2] = await Promise.all([
-        store.refundCredits(deduct.transactionId, D(30)),
-        store.refundCredits(deduct.transactionId, D(30)),
-      ]);
-
-      const succeeded = [r1, r2].filter((r) => !r.error);
-      const failed = [r1, r2].filter(
-        (r) => r.error === "over_refund" || r.error === "already_refunded",
-      );
-
-      expect(succeeded).toHaveLength(1);
-      expect(failed).toHaveLength(1);
-
-      // Total refunded must not exceed original 40
-      const totalRefunded = succeeded.reduce((sum, r) => sum.plus(r.amount), D(0));
-      expect(totalRefunded.lte(40)).toBe(true);
-    });
-  });
-
   // ── MS5: Sweep when balance < total expired ───────────────────────────
   describe("MS5 — sweep clamps to current balance (never goes negative)", () => {
     it("sweep result is clamped and balance stays non-negative", async () => {
@@ -1111,8 +963,7 @@ describe("MemoryStore", () => {
       // 50 credits with no expiry
       await store.addCredits("user-1", D(50), "purchase");
       // Deduct 80: balance goes from 150 to 70
-      const r = await store.reserveCredits("user-1", D(80), "usage");
-      await store.deductCredits("user-1", r.reservationId, D(80));
+      await store.deductWithAllowance("user-1", D(80), { minBalance: D(0) });
       expect((await store.getBalance("user-1")).balance.toString()).toBe("70");
 
       // Advance past expiry and sweep
@@ -1160,8 +1011,7 @@ describe("MemoryStore", () => {
   describe("MS7 — listUserTransactions type filter", () => {
     it("filters by usage type and by purchase type independently", async () => {
       await store.addCredits("user-1", D(500), "purchase");
-      const r = await store.reserveCredits("user-1", D(10), "usage");
-      await store.deductCredits("user-1", r.reservationId, D(10));
+      await store.deductWithAllowance("user-1", D(10), { minBalance: D(0) });
 
       const usageOnly = await store.listUserTransactions("user-1", { types: ["usage"] });
       expect(usageOnly.items.every((t) => t.type === "usage")).toBe(true);
@@ -1177,10 +1027,9 @@ describe("MemoryStore", () => {
   describe("MS8 — listUserTransactions pagination boundary", () => {
     it("handles limit/offset at, near, and beyond the total count", async () => {
       // Create 5 deductions
+      await store.addCredits("user-1", D(1000), "purchase");
       for (let i = 0; i < 5; i++) {
-        await store.addCredits("user-1", D(200), "purchase");
-        const r = await store.reserveCredits("user-1", D(10), "usage");
-        await store.deductCredits("user-1", r.reservationId, D(10));
+        await store.deductWithAllowance("user-1", D(10), { minBalance: D(0) });
       }
       // Seed some purchases too — filter to only usage for a clean count
       const allUsage = await store.listUserTransactions("user-1", { types: ["usage"] });

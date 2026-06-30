@@ -119,16 +119,6 @@ class TestMemoryStoreIntegration:
         with pytest.raises(InsufficientCreditsError, match="Insufficient credits"):
             manager.deduct("user_1", _METRICS)
 
-    def test_reserve_and_release(self, manager: CreditManager) -> None:
-        manager.add_credits("user_1", 100)
-        r = manager.reserve_credits("user_1", 30)
-        assert r.error is None
-        assert r.amount == 30
-
-        # over-reserve → rejected
-        r2 = manager.reserve_credits("user_1", 80)
-        assert r2.error == "insufficient_credits"
-
     def test_setup_lists_all_bundled_migrations(self) -> None:
         """setup() derives its file list from the SQL glob, not a hardcode (L5)."""
         from ducto.sql import _get_sql_files
@@ -542,25 +532,6 @@ class TestPostgresStoreIntegration:
         m2.load_pricing_from_store()
         balance = m2.get_balance(_PG_USER)
         assert balance.balance == 100 - _EXPECTED_COST
-
-    def test_list_user_transactions_pg(self, store: PostgresStore) -> None:
-        store.add_credits(_PG_USER, Decimal("1000"), "purchase", CreditMetadata(reference_id=None))
-        store.add_credits(_PG_USER, Decimal("500"), "signup_bonus")
-        r = store.reserve_credits(_PG_USER, Decimal("200"), "usage")
-        store.deduct_credits(_PG_USER, r.reservation_id, Decimal("200"), metadata=CreditMetadata(model="gpt-4"))
-        result = store.list_user_transactions(_PG_USER)
-        assert len(result) == 3
-        assert result[0].total_count == 3
-        assert sum(1 for t in result if t.type == "usage") == 1
-
-        # pagination
-        page = store.list_user_transactions(_PG_USER, limit=1, offset=0)
-        assert len(page) == 1
-        assert page[0].total_count == 3
-
-        page2 = store.list_user_transactions(_PG_USER, limit=2, offset=1)
-        assert len(page2) == 2
-        assert page2[0].total_count == 3
 
     # ── INT1: spendByModel ────────────────────────────────────────────────
 
@@ -1139,13 +1110,6 @@ class TestHttpxSupabaseStoreContract:
         with pytest.raises(StoreError, match="returned error"):
             store.get_balance("u1")
 
-    def test_business_error_envelope_not_raised_for_reserve(self, store: HttpxSupabaseStore) -> None:
-        # A known business code is returned on the result model, not raised.
-        self._mock_post(store, {"error": "insufficient_credits"})
-        result = store.reserve_credits("u1", Decimal("999"), operation_type="usage")
-        assert result.error == "insufficient_credits"
-        assert result.amount == Decimal("0")
-
     def test_http_status_error_wrapped(self, store: HttpxSupabaseStore) -> None:
         import httpx
 
@@ -1204,25 +1168,6 @@ class TestHttpxSupabaseStoreContract:
         result = store.get_balance("u1")
         assert result.balance == Decimal("100")
         assert result.lifetime_purchased == Decimal("50")
-
-    def test_reserve_credits(self, store: HttpxSupabaseStore) -> None:
-        self._mock_post(
-            store,
-            {"reservation_id": "res_1", "user_id": "u1", "amount": 30, "balance": 70, "reserved": 30},
-        )
-        result = store.reserve_credits("u1", Decimal("30"), operation_type="usage")
-        assert result.reservation_id == "res_1"
-        assert result.amount == Decimal("30")
-
-    def test_deduct_credits(self, store: HttpxSupabaseStore) -> None:
-        self._mock_post(
-            store,
-            {"id": "tx_2", "user_id": "u1", "amount": -10, "new_balance": 90, "idempotent": False},
-        )
-        result = store.deduct_credits("u1", "res_1", Decimal("10"))
-        assert result.transaction_id == "tx_2"
-        assert result.balance_after == Decimal("90")
-        assert not result.idempotent
 
     def test_get_active_pricing(self, store: HttpxSupabaseStore) -> None:
         self._mock_post(
