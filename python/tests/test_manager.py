@@ -18,12 +18,13 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from unittest.mock import MagicMock
 
 from ducto import CreditManager, UsageMetrics
 from ducto.events import CreditEvent, CreditEventEmitter
 from ducto.interface.base import CapReachedError
 from ducto.interface.memory import MemoryStore
-from ducto.interface.models import PlanDefinition, PricingConfigData, SpendCap
+from ducto.interface.models import AllowanceResult, PlanDefinition, PricingConfigData, SpendCap
 from ducto.manager import InsufficientCreditsError, PricingNotLoadedError
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -227,6 +228,7 @@ class TestDeduct:
             user_id="user_1",
             job_name="batch_job",
             idempotency_key="roadmap_1",
+            use_allowance=False,  # explicit to suppress DeprecationWarning
         )
 
         assert result.amount == Decimal("20")
@@ -236,7 +238,7 @@ class TestDeduct:
         """Unknown fixed job is rejected, not silently charged 0 (L1)."""
         manager.add_credits("user_1", 100)
         with pytest.raises(ValueError, match="Unknown fixed-cost job"):
-            manager.deduct_fixed(user_id="user_1", job_name="does_not_exist")
+            manager.deduct_fixed(user_id="user_1", job_name="does_not_exist", use_allowance=False)
         # Balance untouched.
         assert manager.get_balance("user_1").balance == Decimal("100")
 
@@ -309,7 +311,8 @@ class TestPlanAllowance:
         assert result.allowance_consumed == Decimal("5")
         assert result.balance_after == Decimal("10")  # balance unchanged
 
-        allowance = store.check_allowance("user_1")
+        # Use manager.check_allowance — the recommended API path (Fix 6).
+        allowance = mgr.check_allowance("user_1")
         assert allowance.allowance_remaining == Decimal("95")
 
     def test_partial_allowance_with_balance_deduct(self) -> None:
@@ -334,7 +337,7 @@ class TestPlanAllowance:
         assert result.balance_after == Decimal("85")
         assert result.transaction_id != ""
 
-        allowance = store.check_allowance("user_1")
+        allowance = mgr.check_allowance("user_1")
         assert allowance.allowance_remaining == Decimal(0)
 
     def test_full_refund_through_manager(self, manager: CreditManager) -> None:
@@ -355,7 +358,7 @@ class TestPlanAllowance:
     def test_partial_refund_through_manager_fixed(self, manager: CreditManager) -> None:
         """Refund via deduct_fixed path."""
         manager.add_credits("user_1", 100)
-        deduct = manager.deduct_fixed(user_id="user_1", job_name="batch_job")
+        deduct = manager.deduct_fixed(user_id="user_1", job_name="batch_job", use_allowance=False)
         assert deduct.amount == Decimal("20")
 
         refund = manager.refund_credits(deduct.transaction_id, amount=10)
@@ -1132,7 +1135,7 @@ class TestDeductFixedUnknownJob:
     def test_unknown_job_raises_value_error(self, manager: CreditManager) -> None:
         manager.add_credits("user-1", Decimal(100))
         with pytest.raises(ValueError, match="Unknown fixed-cost job"):
-            manager.deduct_fixed("user-1", "nonexistent_job")
+            manager.deduct_fixed("user-1", "nonexistent_job", use_allowance=False)
         # Balance is untouched.
         assert manager.get_balance("user-1").balance == Decimal("100")
 
@@ -1317,3 +1320,316 @@ class TestLowBalanceThresholdReResolution:
         # Deduct 1 more: balance_before=4 is NOT > threshold=5 → does NOT fire
         mgr.deduct("user-1", UsageMetrics(input_tokens=1), idempotency_key="b")
         assert len(events) == 1, "low_balance must not fire again when already below threshold"
+
+
+# ── Fix 6: manager.check_allowance() delegates to store ────────────────────
+
+
+class TestManagerCheckAllowance:
+    """manager.check_allowance() must be a thin, correctly-typed wrapper (Fix 6)."""
+
+    def _mgr_with_plan(self, allowance: Decimal) -> tuple[CreditManager, MemoryStore]:
+        store = MemoryStore()
+        v2 = PricingConfigData(
+            models={"_default": "input_tokens * 1"},
+            plans={"basic": PlanDefinition(id="basic", name="Basic", free_allowance=allowance)},
+            min_balance=Decimal(0),
+        )
+        store.set_active_pricing(v2)
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict(v2)
+        return mgr, store
+
+    def test_check_allowance_no_plan_returns_zero(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        result = mgr.check_allowance("nobody")
+        assert isinstance(result, AllowanceResult)
+        assert result.allowance_remaining == Decimal(0)
+
+    def test_check_allowance_full_allowance(self) -> None:
+        mgr, store = self._mgr_with_plan(Decimal(200))
+        store.set_user_plan("u1", "basic")
+        result = mgr.check_allowance("u1")
+        assert isinstance(result, AllowanceResult)
+        assert result.allowance_remaining == Decimal(200)
+        assert result.plan_id == "basic"
+
+    def test_check_allowance_reduced_after_usage(self) -> None:
+        mgr, store = self._mgr_with_plan(Decimal(100))
+        store.set_user_plan("u1", "basic")
+        store.add_credits("u1", Decimal(200))
+        mgr.deduct("u1", UsageMetrics(input_tokens=30))
+        result = mgr.check_allowance("u1")
+        assert result.allowance_remaining == Decimal(70)
+
+
+# ── Fix 7: deduct_fixed does NOT consume inference allowance by default ─────
+
+
+class TestDeductFixedDeprecationWarning:
+    """deduct_fixed() must emit a DeprecationWarning when use_allowance is omitted (#6)."""
+
+    def _make_mgr(self) -> tuple[CreditManager, MemoryStore]:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict(
+            {"models": {"_default": "input_tokens * 1"}, "fixed": {"job": 5}, "min_balance": 0}
+        )
+        store.add_credits("u1", Decimal(50))
+        return mgr, store
+
+    def test_deprecation_warning_when_use_allowance_not_set(self) -> None:
+        mgr, _ = self._make_mgr()
+        with pytest.warns(DeprecationWarning, match="use_allowance is now False"):
+            mgr.deduct_fixed("u1", job_name="job")
+
+    def test_no_warning_when_use_allowance_explicit_false(self) -> None:
+        import warnings as _w
+        mgr, _ = self._make_mgr()
+        with _w.catch_warnings():
+            _w.simplefilter("error", DeprecationWarning)
+            mgr.deduct_fixed("u1", job_name="job", use_allowance=False)  # no warning
+
+    def test_no_warning_when_use_allowance_explicit_true(self) -> None:
+        import warnings as _w
+        mgr, _ = self._make_mgr()
+        with _w.catch_warnings():
+            _w.simplefilter("error", DeprecationWarning)
+            mgr.deduct_fixed("u1", job_name="job", use_allowance=True)  # no warning
+
+
+class TestDeductFixedAllowance:
+    """Fixed-cost batch jobs must not deplete the user's inference allowance (Fix 7)."""
+
+    def _setup(self) -> tuple[CreditManager, MemoryStore]:
+        store = MemoryStore()
+        v2 = PricingConfigData(
+            models={"_default": "input_tokens * 1"},
+            fixed={"report": Decimal(10)},
+            plans={"free": PlanDefinition(id="free", name="Free", free_allowance=Decimal(50))},
+            min_balance=Decimal(0),
+        )
+        store.set_active_pricing(v2)
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict(v2)
+        store.set_user_plan("u1", "free")
+        store.add_credits("u1", Decimal(100))
+        return mgr, store
+
+    def test_deduct_fixed_does_not_consume_allowance_by_default(self) -> None:
+        """Default use_allowance=False: fixed job charges balance, not the free allowance."""
+        mgr, store = self._setup()
+
+        # Use the default (no explicit use_allowance) — the DeprecationWarning is expected.
+        import warnings as _w
+        with _w.catch_warnings():
+            _w.simplefilter("ignore", DeprecationWarning)
+            result = mgr.deduct_fixed("u1", job_name="report")
+        assert result.amount == Decimal(10)
+        assert result.allowance_consumed == Decimal(0)
+        # Allowance intact — the batch job did not eat inference credits.
+        assert mgr.check_allowance("u1").allowance_remaining == Decimal(50)
+
+    def test_deduct_fixed_use_allowance_true_consumes_allowance(self) -> None:
+        """Opting in via use_allowance=True routes through the allowance pool."""
+        mgr, store = self._setup()
+
+        result = mgr.deduct_fixed("u1", job_name="report", use_allowance=True)
+        assert result.amount == Decimal(0)          # 10 fully covered by allowance
+        assert result.allowance_consumed == Decimal(10)
+        assert mgr.check_allowance("u1").allowance_remaining == Decimal(40)
+
+
+# ── Fix 4: deduct(skip_allowance=True) bypasses the free allowance pool ─────
+
+
+class TestDeductSkipAllowance:
+    """skip_allowance threads from manager.deduct() down to the store (Fix 4)."""
+
+    def test_skip_allowance_charges_full_balance(self) -> None:
+        store = MemoryStore()
+        v2 = PricingConfigData(
+            models={"_default": "input_tokens * 1"},
+            plans={"free": PlanDefinition(id="free", name="Free", free_allowance=Decimal(100))},
+            min_balance=Decimal(0),
+        )
+        store.set_active_pricing(v2)
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict(v2)
+        store.set_user_plan("u1", "free")
+        store.add_credits("u1", Decimal(50))
+
+        result = mgr.deduct("u1", UsageMetrics(input_tokens=20), skip_allowance=True)
+        assert result.amount == Decimal(20)          # full charge, not offset by allowance
+        assert result.allowance_consumed == Decimal(0)
+        # Allowance pool untouched.
+        assert mgr.check_allowance("u1").allowance_remaining == Decimal(100)
+
+    def test_skip_allowance_false_consumes_allowance_normally(self) -> None:
+        store = MemoryStore()
+        v2 = PricingConfigData(
+            models={"_default": "input_tokens * 1"},
+            plans={"free": PlanDefinition(id="free", name="Free", free_allowance=Decimal(100))},
+            min_balance=Decimal(0),
+        )
+        store.set_active_pricing(v2)
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict(v2)
+        store.set_user_plan("u1", "free")
+        store.add_credits("u1", Decimal(50))
+
+        result = mgr.deduct("u1", UsageMetrics(input_tokens=20), skip_allowance=False)
+        assert result.amount == Decimal(0)           # fully covered by allowance
+        assert result.allowance_consumed == Decimal(20)
+        assert mgr.check_allowance("u1").allowance_remaining == Decimal(80)
+
+
+# ── Fix 2: credits.floor_breach event when balance slips into [0, min_balance) ─
+
+
+class TestFloorBreachEvent:
+    """_post_charge_signals emits credits.floor_breach in strict mode when
+    0 <= balance_after < min_balance (non-blocking signal for operators, Fix 2).
+
+    The signal fires at *settle* time (where the actual cost is only known after
+    the work completes and cannot be blocked). It does NOT fire for deduct() —
+    the store enforces the floor there and raises InsufficientCreditsError before
+    any charge commits.
+    """
+
+    def _make_mgr(self, emitter: CreditEventEmitter, min_balance: Decimal = Decimal(5)) -> tuple[CreditManager, MemoryStore]:
+        store = MemoryStore()
+        mgr = CreditManager(store=store, emitter=emitter)
+        mgr.publish_pricing_from_dict({"models": {"_default": "input_tokens * 1"}, "min_balance": min_balance})
+        return mgr, store
+
+    def test_floor_breach_emitted_after_settle_brings_balance_into_gap(self) -> None:
+        """reserve(hold=2) + settle(actual=5): balance 7 → 2; 0 <= 2 < 5 → fires.
+
+        Admission holds 2 (7 - 2 = 5, exactly at floor → admitted).
+        Settle is de-clamped — bills actual cost 5 even though balance_after (2)
+        slips below min_balance (5). floor_breach signals the operator.
+        """
+        emitter = CreditEventEmitter()
+        events: list[CreditEvent] = []
+        emitter.on("credits.floor_breach", events.append)
+        mgr, store = self._make_mgr(emitter)
+        store.add_credits("u1", Decimal(7))
+
+        # Reserve the exact worst-case that barely passes admission (7 - 2 = 5 == floor).
+        lease = mgr.reserve("u1", Decimal(2))
+        # Settle with actual cost 5 — de-clamped settle bills in full even though
+        # balance_after (2) slips below min_balance (5).
+        ded = mgr.settle("u1", lease.lease_id, Decimal(5))
+        assert ded.balance_after == Decimal(2)
+
+        assert len(events) == 1
+        assert events[0].data is not None
+        assert events[0].data["balance"] == Decimal(2)
+        assert events[0].data["min_balance"] == Decimal(5)
+
+    def test_floor_breach_not_emitted_when_balance_stays_above_min(self) -> None:
+        emitter = CreditEventEmitter()
+        events: list[CreditEvent] = []
+        emitter.on("credits.floor_breach", events.append)
+        mgr, store = self._make_mgr(emitter)
+        store.add_credits("u1", Decimal(100))
+
+        lease = mgr.reserve("u1", Decimal(10))
+        mgr.settle("u1", lease.lease_id, Decimal(1))
+        assert events == []  # balance 99 is above min_balance 5
+
+    def test_floor_breach_not_emitted_in_overdraft_mode(self) -> None:
+        """Negative balance in overdraft mode does not trigger floor_breach."""
+        store = MemoryStore()
+        emitter = CreditEventEmitter()
+        events: list[CreditEvent] = []
+        emitter.on("credits.floor_breach", events.append)
+        mgr = CreditManager(store=store, emitter=emitter, policy="overdraft", overdraft_floor=Decimal(-100))
+        mgr.publish_pricing_from_dict({"models": {"_default": "input_tokens * 1"}, "min_balance": 5})
+        store.add_credits("u1", Decimal(10))
+
+        # Overdraft settle pushes balance to -40 — no floor_breach in overdraft mode.
+        lease = mgr.reserve("u1", Decimal(10))
+        mgr.settle("u1", lease.lease_id, Decimal(50))
+        assert events == []
+
+
+# ── Fix 8: _resolve_policy fails closed on store errors ─────────────────────
+
+
+class TestResolvePolicyFailClosed:
+    """_resolve_policy must propagate store errors (no silent plan demotion, Fix 8).
+
+    _resolve_policy is called by reserve() and can_afford() — not by deduct().
+    """
+
+    def test_store_error_on_get_user_plan_propagates_via_reserve(self) -> None:
+        """A store outage during get_user_plan must surface — not silently demote the plan."""
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict({"models": {"_default": "input_tokens * 1"}, "min_balance": 0})
+        store.add_credits("u1", Decimal(100))
+
+        original_get_user_plan = store.get_user_plan
+
+        def exploding_get_user_plan(user_id: str):
+            raise RuntimeError("DB connection lost")
+
+        store.get_user_plan = exploding_get_user_plan  # type: ignore[method-assign]
+        try:
+            with pytest.raises(RuntimeError, match="DB connection lost"):
+                mgr.reserve("u1", Decimal(10))
+        finally:
+            store.get_user_plan = original_get_user_plan
+
+    def test_store_error_on_get_user_plan_is_fail_open_for_can_afford(self) -> None:
+        """can_afford() is advisory — a store outage must NOT raise; it returns
+        affordable=False with reason='policy_unavailable' (#7)."""
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict({"models": {"_default": "input_tokens * 1"}, "min_balance": 0})
+        store.add_credits("u1", Decimal(100))
+
+        original_get_user_plan = store.get_user_plan
+
+        def exploding_get_user_plan(user_id: str):
+            raise RuntimeError("DB connection lost")
+
+        store.get_user_plan = exploding_get_user_plan  # type: ignore[method-assign]
+        try:
+            result = mgr.can_afford("u1", Decimal(10))
+            assert result.affordable is False
+            assert result.reason == "policy_unavailable"
+        finally:
+            store.get_user_plan = original_get_user_plan
+
+
+# ── Fix 9: idempotent replay returns original balance_after even after credits added ─
+
+
+class TestIdempotentReplayStable:
+    """Idempotent replay must return the balance_after from the original
+    transaction, not the current live balance (Fix 9)."""
+
+    def test_idempotent_replay_stable_after_credit_top_up(self) -> None:
+        store = MemoryStore()
+        mgr = CreditManager(store=store)
+        mgr.publish_pricing_from_dict({"models": {"_default": "input_tokens * 1"}, "min_balance": 0})
+        mgr.add_credits("u1", Decimal(100))
+
+        # First call: deducts 10, balance_after = 90.
+        r1 = mgr.deduct("u1", UsageMetrics(input_tokens=10), idempotency_key="ikey")
+        assert r1.balance_after == Decimal(90)
+
+        # Intervening event: add 50 more credits (balance is now 140).
+        mgr.add_credits("u1", Decimal(50))
+        assert mgr.get_balance("u1").balance == Decimal(140)
+
+        # Replay: must still return the ORIGINAL balance_after (90), not 140.
+        r2 = mgr.deduct("u1", UsageMetrics(input_tokens=10), idempotency_key="ikey")
+        assert r2.idempotent
+        assert r2.transaction_id == r1.transaction_id
+        assert r2.balance_after == Decimal(90)  # original, not 140
+        assert mgr.get_balance("u1").balance == Decimal(140)  # live balance unchanged

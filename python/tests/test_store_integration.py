@@ -1070,6 +1070,7 @@ class TestHttpxSupabaseStoreContract:
                 "p_min_balance": "5",
                 "p_model": "gpt-4",
                 "p_metadata": {"model": "gpt-4"},
+                "p_skip_allowance": False,
             },
             headers=self._EXPECTED_HEADERS,
         )
@@ -1080,6 +1081,34 @@ class TestHttpxSupabaseStoreContract:
         assert result.balance_after == Decimal("96.0")
         assert result.cap_warning == "warn"
         assert result.error is None
+
+    def test_deduct_with_allowance_skip_allowance_serialized(self, store: HttpxSupabaseStore) -> None:
+        """skip_allowance=True must be forwarded as p_skip_allowance in the RPC body (Fix 7)."""
+        mock = self._mock_post(
+            store,
+            {
+                "transaction_id": "tx_10",
+                "amount": 20.0,
+                "allowance_consumed": 0.0,
+                "balance_after": 80.0,
+                "idempotent": False,
+                "cap_warning": None,
+            },
+        )
+        store.deduct_with_allowance("u1", Decimal("20"), skip_allowance=True)
+        mock.assert_called_once_with(
+            "https://test.supabase.co/rest/v1/rpc/deduct_with_allowance",
+            json={
+                "p_user_id": "u1",
+                "p_amount": "20",
+                "p_idempotency_key": None,
+                "p_min_balance": "0",
+                "p_model": None,
+                "p_metadata": {},
+                "p_skip_allowance": True,
+            },
+            headers=self._EXPECTED_HEADERS,
+        )
 
     def test_deduct_with_allowance_error_envelope(self, store: HttpxSupabaseStore) -> None:
         self._mock_post(store, {"error": "cap_reached", "action": "deny"})

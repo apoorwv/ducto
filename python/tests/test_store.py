@@ -259,6 +259,48 @@ class TestPlanManagement:
         store.increment_usage_window("user-1", "basic", Decimal("30"))
         assert store.check_allowance("user-1").allowance_remaining == 120
 
+    def test_deduct_with_allowance_skip_allowance_bypasses_free_credits(self) -> None:
+        """skip_allowance=True must charge the full amount from balance, not the allowance pool (Fix 7)."""
+        store = MemoryStore()
+        v2 = PricingConfigData(
+            models={"_default": "1"},
+            plans={"free": PlanDefinition(id="free", name="Free", free_allowance=Decimal("100"))},
+            min_balance=Decimal(0),
+        )
+        store.set_active_pricing(v2)
+        store.set_user_plan("user-1", "free")
+        store.add_credits("user-1", Decimal("50"))
+
+        result = store.deduct_with_allowance(
+            "user-1",
+            Decimal("20"),
+            skip_allowance=True,
+        )
+        # Full charge from balance, none from allowance pool.
+        assert result.amount == Decimal("20")
+        assert result.allowance_consumed == Decimal(0)
+        assert store.get_balance("user-1").balance == Decimal("30")
+        # Allowance pool entirely intact.
+        assert store.check_allowance("user-1").allowance_remaining == Decimal("100")
+
+    def test_deduct_with_allowance_default_consumes_allowance(self) -> None:
+        """skip_allowance defaults to False — free allowance is consumed first."""
+        store = MemoryStore()
+        v2 = PricingConfigData(
+            models={"_default": "1"},
+            plans={"free": PlanDefinition(id="free", name="Free", free_allowance=Decimal("100"))},
+            min_balance=Decimal(0),
+        )
+        store.set_active_pricing(v2)
+        store.set_user_plan("user-1", "free")
+        store.add_credits("user-1", Decimal("50"))
+
+        result = store.deduct_with_allowance("user-1", Decimal("20"))
+        assert result.amount == Decimal(0)   # fully covered by allowance
+        assert result.allowance_consumed == Decimal("20")
+        assert store.get_balance("user-1").balance == Decimal("50")  # balance untouched
+        assert store.check_allowance("user-1").allowance_remaining == Decimal("80")
+
 
 # ── Credit expiry ───────────────────────────────────────────────────────────
 

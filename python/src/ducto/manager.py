@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import warnings
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -43,6 +44,7 @@ from ducto.interface.base import CapReachedError, CreditStore
 from ducto.interface.models import (
     AddCreditsResult,
     AggregateStatsRow,
+    AllowanceResult,
     AvailableResult,
     BalanceResult,
     BillingMode,
@@ -102,6 +104,10 @@ class LeaseNotFoundError(CreditError):
 
 
 logger = logging.getLogger(__name__)
+
+# Sentinel used by deduct_fixed to detect callers that haven't explicitly opted
+# in or out of allowance consumption after the Fix-7 default change (#6).
+_USE_ALLOWANCE_UNSET: object = object()
 
 #: Default ``low_balance`` threshold = this multiple of the engine's
 #: ``min_balance`` (contract §6 / M18). Override via the ``CreditManager``
@@ -348,11 +354,11 @@ class CreditManager:
         """
         policy = self._preset_policy()
 
-        plan: GetUserPlanResult | None
-        try:
-            plan = self._store.get_user_plan(user_id)
-        except Exception:  # pragma: no cover - store outage shouldn't crash admission
-            plan = None
+        # Intentionally not catching exceptions: a store outage at plan-fetch time
+        # must surface to the caller rather than silently demoting the user to the
+        # constructor preset (which can flip a paid/overdraft user to strict_prepaid
+        # and block legitimate requests without any signal — Fix 4).
+        plan = self._store.get_user_plan(user_id)
 
         if plan is not None and plan.plan_id:
             policy = OperationPolicy(
@@ -421,12 +427,22 @@ class CreditManager:
         required_feature: str | None = None,
         ttl: int | None = None,
         metadata: CreditMetadata | None = None,
+        model: str | None = None,
     ) -> LeaseResult:
         """Atomically acquire a lease — the only admission control (D4).
 
         Resolves the effective policy, enforces ``required_feature``, sizes the hold
         from ``metrics_or_amount`` (worst-case in strict, estimate in overdraft — the
         caller chooses what to pass), and calls the store's atomic ``create_lease``.
+
+        The store's ``create_lease`` is allowance-aware: remaining free allowance is
+        added to the effective headroom so free-tier users are not falsely rejected
+        for worst-case holds they can cover with allowance (Fix 1 / D4).
+
+        ``model`` is inferred from ``UsageMetrics`` when passed; for raw
+        ``Decimal``/``int`` amounts use the explicit ``model`` kwarg so per-model
+        spend-caps and analytics remain accurate (Fix 5).
+
         On any business failure raises the coherent typed exception; on success emits
         ``credits.reserved`` and returns the :class:`LeaseResult`.
         """
@@ -437,7 +453,10 @@ class CreditManager:
 
         policy = self._resolve_policy(user_id, operation_type, billing_mode)
         floor = self._resolve_floor(policy)
-        amount, model = self._cost_of(metrics_or_amount)
+        amount, derived_model = self._cost_of(metrics_or_amount)
+        # When caller passes a raw Decimal/int (no model in metrics), fall back to
+        # the explicit ``model`` kwarg so cap checks and analytics are not blind.
+        effective_model = derived_model if derived_model is not None else model
         ttl_seconds = ttl if ttl is not None else self._default_ttl
 
         result = self._store.create_lease(
@@ -448,7 +467,7 @@ class CreditManager:
             floor=floor,
             max_concurrent=policy.max_concurrent,
             ttl_seconds=ttl_seconds,
-            model=model,
+            model=effective_model,
             overdraft_floor=policy.overdraft_floor,
             metadata=metadata,
         )
@@ -483,6 +502,7 @@ class CreditManager:
         *,
         idempotency_key: str | None = None,
         metadata: CreditMetadata | None = None,
+        skip_allowance: bool = False,
     ) -> DeductionResult:
         """Charge the ACTUAL cost against a lease and finalize it (D5).
 
@@ -491,6 +511,11 @@ class CreditManager:
         non-blocking ``credits.cap_warning``/``credits.cap_reached`` signal. Emits
         ``credits.deducted``, then multi-level ``credits.low_balance`` and a
         ``credits.overdraft`` signal if the balance went negative.
+
+        ``skip_allowance=True`` prevents the free inference allowance from being
+        consumed at settle time. Use for fixed-cost operations reserved via the
+        lease pattern (mirrors the ``deduct_fixed`` / ``deduct`` ``skip_allowance``
+        flag — Fix 7 / #4).
         """
         amount, model = self._cost_of(metrics_or_amount)
 
@@ -510,6 +535,7 @@ class CreditManager:
             min_balance=self._engine.min_balance if self._engine else Decimal(0),
             model=model,
             metadata=tx_meta,
+            skip_allowance=skip_allowance,
         )
 
         if result.error:
@@ -587,12 +613,38 @@ class CreditManager:
     ) -> CanAffordResult:
         """Advisory affordability check — UI only, non-locking, may be stale (D4/H3).
 
-        Never use this as an admission gate; only ``reserve`` is authoritative.
+        ``available`` in the result reflects the user's effective spending power:
+        ``balance − active holds + allowance_remaining``. This matches the headroom
+        ``reserve`` uses so the Send-button check agrees with the admission gate
+        (Fix 1). Never use this as an admission gate; only ``reserve`` is authoritative.
         """
         worst_case, _ = self._cost_of(metrics_or_amount)
         avail = self._store.get_available(user_id)
-        policy = self._resolve_policy(user_id, operation_type, billing_mode)
+
+        # can_afford() is an advisory / UI method — it must never raise (#7).
+        # _resolve_policy may call store.get_user_plan; wrap it so a transient
+        # store outage returns a cautious affordable=False rather than an exception.
+        try:
+            policy = self._resolve_policy(user_id, operation_type, billing_mode)
+        except Exception:
+            return CanAffordResult(
+                affordable=False,
+                available=avail.available,
+                worst_case=worst_case,
+                reason="policy_unavailable",
+            )
         floor = self._resolve_floor(policy)
+
+        # Include remaining free allowance in the effective available so the advisory
+        # check agrees with what create_lease will actually admit (Fix 1).
+        allowance_credit = Decimal(0)
+        try:
+            ar = self._store.check_allowance(user_id)
+            allowance_credit = ar.allowance_remaining
+        except Exception:
+            pass  # advisory check: fail open if allowance fetch fails
+
+        effective_available = avail.available + allowance_credit
 
         affordable = True
         reason: str | None = None
@@ -601,13 +653,13 @@ class CreditManager:
             if not check.has_feature:
                 affordable = False
                 reason = "feature_not_entitled"
-        if affordable and (avail.available - worst_case) < floor:
+        if affordable and (effective_available - worst_case) < floor:
             affordable = False
             reason = "insufficient_credits"
 
         return CanAffordResult(
             affordable=affordable,
-            available=avail.available,
+            available=effective_available,
             worst_case=worst_case,
             reason=reason,
         )
@@ -615,6 +667,15 @@ class CreditManager:
     def get_available(self, user_id: str) -> AvailableResult:
         """Advisory ``available = balance − Σ active holds`` read (UI only, D4/H3)."""
         return self._store.get_available(user_id)
+
+    def check_allowance(self, user_id: str) -> AllowanceResult:
+        """Get remaining free allowance for the current billing period (Fix 6).
+
+        Convenience wrapper that routes through the manager so callers never need
+        to reach past it into the raw store. Returns a zero-allowance result for
+        planless users (no exception).
+        """
+        return self._store.check_allowance(user_id)
 
     def run_billed(
         self,
@@ -656,11 +717,39 @@ class CreditManager:
     # ── Low-balance / overdraft signals (interface plan §6) ─────────────
 
     def _post_charge_signals(self, user_id: str, result: DeductionResult) -> None:
-        """Emit overdraft + multi-level low_balance after a balance-decreasing op."""
-        if result.balance_after < 0:
-            self._emit("credits.overdraft", user_id, {"balance": result.balance_after, "amount": result.amount})
+        """Emit overdraft, floor-breach, and multi-level low_balance after a charge.
+
+        Overdraft (balance < 0) is always signalled.  Floor breach (0 ≤ balance <
+        min_balance) is a non-blocking signal for strict-mode users: the work is
+        already done but the operator should know the balance slipped below the
+        configured floor, which means a prior hold was under-sized (Fix 2).
+
+        Idempotent replays are skipped entirely at the top: re-emitting overdraft
+        or floor_breach with the *original* balance figures against the *current*
+        live balance would produce spurious duplicate events (Fix 2/#2).
+        """
         if result.idempotent:
             return
+
+        if result.balance_after < 0:
+            self._emit("credits.overdraft", user_id, {"balance": result.balance_after, "amount": result.amount})
+        else:
+            # Emit a non-blocking floor breach when balance slipped below min_balance
+            # without going negative (strict-mode under-estimate of worst-case cost).
+            min_bal = self._engine.min_balance if self._engine else Decimal(0)
+            if min_bal > 0 and result.balance_after < min_bal:
+                self._emit(
+                    "credits.floor_breach",
+                    user_id,
+                    {"balance": result.balance_after, "min_balance": min_bal, "amount": result.amount},
+                )
+
+        # balance_before must account for BOTH the net charge (result.amount) AND any
+        # free-allowance consumption (result.allowance_consumed).  result.amount is the
+        # net debit to the balance; allowance does not touch the balance, so:
+        #   balance_before = balance_after + net  (always correct, unchanged)
+        # This comment exists to document that allowance_consumed is intentionally
+        # excluded: balance only moves by net (Fix #3).
         balance_after = result.balance_after
         balance_before = balance_after + result.amount
         self._emit_low_balance(user_id, balance_before, balance_after)
@@ -731,6 +820,8 @@ class CreditManager:
         metrics: UsageMetrics,
         idempotency_key: str | None = None,
         metadata: CreditMetadata | None = None,
+        *,
+        skip_allowance: bool = False,
     ) -> DeductionResult:
         """Calculate the cost and charge it in one atomic store transaction.
 
@@ -747,6 +838,10 @@ class CreditManager:
             metrics: Usage metrics (model, tokens, tool calls, etc.).
             idempotency_key: Optional user-scoped key for idempotent replay.
             metadata: Extra metadata to attach to the transaction.
+            skip_allowance: When ``True``, bypass free-allowance consumption so
+                the full cost is charged to the balance. Pass ``True`` for
+                fixed-cost batch jobs (via ``deduct_fixed``) to keep inference
+                allowance uncontaminated (Fix 7).
 
         Returns:
             ``DeductionResult`` whose ``amount`` is the net (positive) charge to
@@ -796,6 +891,7 @@ class CreditManager:
             min_balance=self._engine.min_balance,
             model=metrics.model,
             metadata=tx_meta,
+            skip_allowance=skip_allowance,
         )
 
         # 4) Error path: emit a failure event and raise the typed exception.
@@ -1059,6 +1155,8 @@ class CreditManager:
         job_name: str,
         idempotency_key: str | None = None,
         metadata: CreditMetadata | None = None,
+        *,
+        use_allowance: bool | object = _USE_ALLOWANCE_UNSET,
     ) -> DeductionResult:
         """Shortcut for fixed-cost batch jobs (roadmap gen, topic gen, etc.).
 
@@ -1066,10 +1164,28 @@ class CreditManager:
         charging 0 credits (L1): the engine returns ``None`` for an unknown job,
         which would otherwise become a "successful" free deduction.
 
+        **BEHAVIOURAL CHANGE (Fix 7):** ``use_allowance`` now defaults to
+        ``False``. Fixed-cost operations (PDF generation, training runs, …) and
+        monthly free inference allowances are separate budgets and must not
+        cross-contaminate. Callers that do not pass ``use_allowance`` explicitly
+        will receive a ``DeprecationWarning`` (#6). Pass ``use_allowance=False``
+        to silence the warning and adopt the new behaviour, or
+        ``use_allowance=True`` to keep the old allowance-first billing.
+
         Raises:
             PricingNotLoadedError: If pricing hasn't been loaded.
             ValueError: If ``job_name`` is not a configured fixed-cost job.
         """
+        if use_allowance is _USE_ALLOWANCE_UNSET:
+            warnings.warn(
+                "deduct_fixed() default changed: use_allowance is now False (Fix 7). "
+                "Fixed-cost jobs no longer consume the free inference allowance. "
+                "Pass use_allowance=False to silence this warning, or use_allowance=True "
+                "to restore the previous allowance-first behaviour.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            use_allowance = False
         if not self._engine:
             raise PricingNotLoadedError(
                 "PricingEngine not loaded. Call publish_pricing_from_dict() or load_pricing_from_store() first."
@@ -1082,4 +1198,5 @@ class CreditManager:
             metrics=UsageMetrics(fixed_job=job_name),
             idempotency_key=idempotency_key,
             metadata=metadata,
+            skip_allowance=not use_allowance,
         )

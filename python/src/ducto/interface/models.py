@@ -128,6 +128,15 @@ class CanAffordResult(BaseModel):
     """Advisory affordability check — UI only, non-locking, may be stale (D4/H3).
 
     Never used for admission control; that is exclusively the lease (``reserve``).
+
+    **Semantic note (#8):** ``available`` here is the *effective* spending power::
+
+        effective_available = balance − active_holds + allowance_remaining
+
+    This includes the user's remaining free allowance so that UI elements (e.g.
+    a "Send" button) correctly reflect what ``reserve()`` will actually admit.
+    It is therefore **different** from ``AvailableResult.available`` (returned
+    by ``get_available()``) which is cash-only: ``balance − active_holds``.
     """
 
     affordable: bool = False
@@ -137,7 +146,12 @@ class CanAffordResult(BaseModel):
 
 
 class AvailableResult(BaseModel):
-    """Advisory available-balance read: ``available = balance − reserved`` (D4/H3)."""
+    """Advisory available-balance read: ``available = balance − reserved`` (D4/H3).
+
+    ``available`` is **cash-only** — it does not include free allowance.
+    Use ``can_afford()`` (which returns ``CanAffordResult``) when you need
+    the effective spending power including allowance headroom.
+    """
 
     user_id: str
     balance: Decimal = Decimal(0)

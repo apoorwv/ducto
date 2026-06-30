@@ -236,6 +236,7 @@ class MemoryStore(CreditStore):
         min_balance: Decimal = Decimal(0),
         model: str | None = None,
         metadata: CreditMetadata | None = None,
+        skip_allowance: bool = False,
     ) -> DeductionResult:
         """Atomic calculate-then-charge under the store lock (contract §2).
 
@@ -259,26 +260,20 @@ class MemoryStore(CreditStore):
         with self._lock:
             balance = self._balances.get(user_id, Decimal(0))
 
-            # (2) Idempotency replay (user-scoped).
+            # (2) Idempotency replay (user-scoped). Use _replay_deduction so that
+            # balance_after is read from the original tx metadata (Fix 8), not
+            # from the current (potentially diverged) live balance.
             if idempotency_key is not None:
                 for tx in self._transactions:
                     if tx.user_id == user_id and tx.metadata.get("idempotency_key") == idempotency_key:
-                        consumed = _as_decimal(tx.metadata.get("allowance_consumed", 0))
-                        return DeductionResult(
-                            transaction_id=tx.id,
-                            user_id=user_id,
-                            amount=abs(tx.amount),
-                            allowance_consumed=consumed,
-                            balance_after=balance,
-                            idempotent=True,
-                        )
+                        return self._replay_deduction(tx, user_id, balance)
 
             # (3) Allowance: consume as much as the plan's remaining free allowance
-            # covers. Net = gross − consumed. Computed but not committed until the
-            # cap/floor checks pass (all-or-nothing).
+            # covers. Net = gross − consumed. Skipped for fixed-cost batch jobs so
+            # they don't eat the user's inference allowance (Fix 7 / skip_allowance).
             plan_key = self._user_plan_map.get(user_id)
             consume = Decimal(0)
-            if plan_key and plan_key in self._plan_definitions:
+            if not skip_allowance and plan_key and plan_key in self._plan_definitions:
                 remaining = self._allowance_remaining(user_id, plan_key)
                 consume = min(remaining, amount)
             net = amount - consume
@@ -315,6 +310,7 @@ class MemoryStore(CreditStore):
                 self._increment_usage_window(user_id, plan_key, consume)
 
             self._balances[user_id] = balance - net
+            new_balance = self._balances[user_id]
 
             tx_id = str(uuid.uuid4())
             tx_meta: dict[str, Any] = metadata.model_dump(exclude_none=True) if metadata else {}
@@ -323,7 +319,10 @@ class MemoryStore(CreditStore):
                 tx_meta["model"] = model
             if idempotency_key is not None:
                 tx_meta["idempotency_key"] = idempotency_key
+            # Store balance_after so idempotent replay returns the original value,
+            # not the (wrong) current balance at replay time (Fix 8).
             tx_meta["allowance_consumed"] = str(consume)
+            tx_meta["balance_after"] = str(new_balance)
             self._transactions.append(
                 _TransactionRecord(
                     id=tx_id,
@@ -340,7 +339,7 @@ class MemoryStore(CreditStore):
                 user_id=user_id,
                 amount=net,
                 allowance_consumed=consume,
-                balance_after=self._balances[user_id],
+                balance_after=new_balance,
                 idempotent=False,
                 cap_warning=cap_warning,
             )
@@ -383,6 +382,11 @@ class MemoryStore(CreditStore):
             # Ensure a balance row exists (overdraft admits brand-new users at 0).
             balance = self._balances.setdefault(user_id, Decimal(0))
 
+            # (1A) Allowance headroom: remaining free allowance extends the effective
+            #      available so free-tier users aren't falsely rejected at admission
+            #      for a worst-case hold they can fully cover with allowance (Fix 1).
+            allowance_credit = self._allowance_remaining(user_id, self._user_plan_map.get(user_id) or "")
+
             # (2) Concurrency: count active leases for this operation type.
             if max_concurrent is not None and len(self._active_leases(user_id, operation_type)) >= max_concurrent:
                 return LeaseResult(
@@ -407,9 +411,9 @@ class MemoryStore(CreditStore):
                         error="cap_reached",
                     )
 
-            # (4) available = balance − Σ active holds; reject if floor breached.
+            # (4) effective_available = balance − Σ active holds + allowance headroom.
             reserved_total = sum((r.amount for r in self._active_leases(user_id)), Decimal(0))
-            available = balance - reserved_total
+            available = balance - reserved_total + allowance_credit
             if available - amount < floor:
                 return LeaseResult(
                     lease_id="",
@@ -447,13 +451,19 @@ class MemoryStore(CreditStore):
             )
 
     def _replay_deduction(self, tx: _TransactionRecord, user_id: str, balance: Decimal) -> DeductionResult:
-        """Build an idempotent-replay ``DeductionResult`` from a ledger row (lock held)."""
+        """Build an idempotent-replay ``DeductionResult`` from a ledger row (lock held).
+
+        Uses the ``balance_after`` stored in the transaction's metadata rather than
+        the current balance so that multiple replays return a stable result (Fix 8).
+        Falls back to ``balance`` (current) for transactions written before this fix.
+        """
+        original_balance_after = _as_decimal(tx.metadata.get("balance_after", balance))
         return DeductionResult(
             transaction_id=tx.id,
             user_id=user_id,
             amount=abs(tx.amount),
             allowance_consumed=_as_decimal(tx.metadata.get("allowance_consumed", 0)),
-            balance_after=balance,
+            balance_after=original_balance_after,
             idempotent=True,
         )
 
@@ -500,6 +510,7 @@ class MemoryStore(CreditStore):
         min_balance: Decimal = Decimal(0),
         model: str | None = None,
         metadata: CreditMetadata | None = None,
+        skip_allowance: bool = False,
     ) -> DeductionResult:
         amount = _as_decimal(amount)
 
@@ -541,10 +552,11 @@ class MemoryStore(CreditStore):
                     idempotent=False,
                 )
 
-            # Allowance consume on the actual cost.
+            # Allowance consume on the actual cost.  Skipped for fixed-cost jobs
+            # so they don't deplete the inference allowance (Fix 7 / #4).
             plan_key = self._user_plan_map.get(user_id)
             consume = Decimal(0)
-            if plan_key and plan_key in self._plan_definitions:
+            if not skip_allowance and plan_key and plan_key in self._plan_definitions:
                 consume = min(self._allowance_remaining(user_id, plan_key), amount)
             net = amount - consume
 
@@ -563,6 +575,7 @@ class MemoryStore(CreditStore):
                 self._increment_usage_window(user_id, plan_key, consume)
 
             self._balances[user_id] = balance - net
+            new_balance = self._balances[user_id]
 
             tx_id = str(uuid.uuid4())
             tx_meta: dict[str, Any] = metadata.model_dump(exclude_none=True) if metadata else {}
@@ -570,7 +583,10 @@ class MemoryStore(CreditStore):
                 tx_meta["model"] = model
             if idempotency_key is not None:
                 tx_meta["idempotency_key"] = idempotency_key
+            # Store balance_after so idempotent replay returns the original value,
+            # not the (wrong) current balance at replay time (Fix 8).
             tx_meta["allowance_consumed"] = str(consume)
+            tx_meta["balance_after"] = str(new_balance)
             self._transactions.append(
                 _TransactionRecord(
                     id=tx_id,
@@ -590,7 +606,7 @@ class MemoryStore(CreditStore):
                 user_id=user_id,
                 amount=net,
                 allowance_consumed=consume,
-                balance_after=self._balances[user_id],
+                balance_after=new_balance,
                 idempotent=False,
                 cap_warning=cap_warning,
             )
@@ -620,11 +636,14 @@ class MemoryStore(CreditStore):
             lease.expires_at = now + timedelta(seconds=ttl_seconds)
             reserved_total = sum((r.amount for r in self._active_leases(user_id)), Decimal(0))
             balance = self._balances.get(user_id, Decimal(0))
+            # Mirror create_lease: include remaining free allowance in available so the
+            # reported headroom is consistent across admission and renewal (#9).
+            allowance_credit = self._allowance_remaining(user_id, self._user_plan_map.get(user_id) or "")
             return LeaseResult(
                 lease_id=lease_id,
                 user_id=user_id,
                 amount=lease.amount,
-                available=balance - reserved_total,
+                available=balance - reserved_total + allowance_credit,
                 reserved_total=reserved_total,
                 billing_mode=lease.billing_mode,  # type: ignore[arg-type]
                 expires_at=lease.expires_at.isoformat(),
@@ -653,7 +672,9 @@ class MemoryStore(CreditStore):
         return _utcnow().strftime("%Y-%m-01")
 
     def _allowance_remaining(self, user_id: str, plan_key: str) -> Decimal:
-        plan_def = self._plan_definitions[plan_key]
+        plan_def = self._plan_definitions.get(plan_key)
+        if plan_def is None:
+            return Decimal(0)
         period = self._billing_period()
         usage = sum(
             (

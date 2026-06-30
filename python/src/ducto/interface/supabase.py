@@ -311,12 +311,17 @@ class HttpxSupabaseStore(CreditStore):
         min_balance: Decimal = Decimal(0),
         model: str | None = None,
         metadata: CreditMetadata | None = None,
+        skip_allowance: bool = False,
     ) -> DeductionResult:
         """Call the atomic ``deduct_with_allowance`` RPC (contract §2).
 
         Money params are sent as decimal strings; NUMERIC results come back as
         JSON numbers and are wrapped via ``Decimal(str(...))``. Business-error
         envelopes map onto ``DeductionResult.error``.
+
+        ``skip_allowance`` is forwarded as ``p_skip_allowance`` so that
+        fixed-cost batch jobs do not consume the user's inference allowance
+        (Fix 7 — mirrors the postgres.py and memory.py implementations).
         """
         amount = _dec(amount)
         min_balance = _dec(min_balance)
@@ -330,6 +335,7 @@ class HttpxSupabaseStore(CreditStore):
                 "p_min_balance": str(min_balance),
                 "p_model": model,
                 "p_metadata": meta,
+                "p_skip_allowance": skip_allowance,
             },
         )
 
@@ -414,6 +420,7 @@ class HttpxSupabaseStore(CreditStore):
         min_balance: Decimal = Decimal(0),
         model: str | None = None,
         metadata: CreditMetadata | None = None,
+        skip_allowance: bool = False,
     ) -> DeductionResult:
         amount = _dec(amount)
         min_balance = _dec(min_balance)
@@ -428,6 +435,7 @@ class HttpxSupabaseStore(CreditStore):
                 "p_min_balance": str(min_balance),
                 "p_model": model,
                 "p_metadata": meta,
+                "p_skip_allowance": skip_allowance,
             },
         )
         if "error" in row:

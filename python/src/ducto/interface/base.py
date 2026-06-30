@@ -121,6 +121,7 @@ class CreditStore(ABC):
         min_balance: Decimal = Decimal(0),
         model: str | None = None,
         metadata: CreditMetadata | None = None,
+        skip_allowance: bool = False,
     ) -> DeductionResult:
         """Atomically charge a gross cost in a single server-side transaction.
 
@@ -129,9 +130,13 @@ class CreditStore(ABC):
 
         1. Locks the user's credit row.
         2. Honors ``idempotency_key`` (user-scoped) — a replay returns the
-           original result with ``idempotent=True``.
+           original result with ``idempotent=True``. The replayed
+           ``balance_after`` is the balance at the time of the *original* call,
+           not the current balance (Fix 8).
         3. Consumes free allowance first (``allowance_consumed`` on the result),
-           charging only the net remainder to the balance.
+           charging only the net remainder to the balance. Skipped entirely when
+           ``skip_allowance=True`` so that fixed-cost batch jobs (daily_report,
+           batch_train, …) do **not** eat the user's inference allowance (Fix 7).
         4. Enforces spend caps on the net: a ``deny`` cap aborts with
            ``error="cap_reached"`` (no allowance consumed); ``warn``/``notify``
            set ``cap_warning`` and continue.
@@ -151,6 +156,10 @@ class CreditStore(ABC):
             min_balance: Minimum balance floor (default ``Decimal(0)``).
             model: Optional model name recorded on the transaction.
             metadata: Extra metadata merged onto the transaction.
+            skip_allowance: When ``True`` the free-allowance step is bypassed
+                entirely; the full ``amount`` is charged to the balance.
+                Use for fixed-cost batch jobs that should not consume inference
+                allowance (Fix 7).
 
         Returns:
             ``DeductionResult`` with net ``amount``, ``allowance_consumed``,
@@ -208,15 +217,21 @@ class CreditStore(ABC):
         min_balance: Decimal = Decimal(0),
         model: str | None = None,
         metadata: CreditMetadata | None = None,
+        skip_allowance: bool = False,
     ) -> DeductionResult:
         """Charge the **actual** cost against a lease, then mark it settled (D5).
 
         De-clamped: charges ``amount`` even if it exceeds the lease hold (overdraft),
         never clamps to the lease amount.
-        Pipeline: idempotency replay → allowance consume → spend-cap (advisory at
-        settle: a breach sets ``cap_warning`` but never blocks) → debit (no floor
-        block; balance may go negative in overdraft) → ledger row → mark lease
-        ``settled``. ``amount == 0`` releases the lease without charging.
+        Pipeline: idempotency replay → allowance consume (skipped when
+        ``skip_allowance=True``, Fix 7) → spend-cap (advisory at settle: a breach
+        sets ``cap_warning`` but never blocks) → debit (no floor block; balance may
+        go negative in overdraft) → ledger row → mark lease ``settled``.
+        ``amount == 0`` releases the lease without charging.
+
+        ``skip_allowance=True`` prevents the free inference allowance from being
+        consumed at settle time — mirrors :meth:`deduct_with_allowance` Fix 7 so
+        the lease path and the direct-deduct path behave consistently.
 
         Lease-state failures are returned via ``DeductionResult.error``:
         ``lease_not_found`` (missing / other user / released), ``lease_expired``

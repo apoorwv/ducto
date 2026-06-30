@@ -190,6 +190,7 @@ class PostgresStore(CreditStore):
         min_balance: Decimal = Decimal(0),
         model: str | None = None,
         metadata: CreditMetadata | None = None,
+        skip_allowance: bool = False,
     ) -> DeductionResult:
         """Call the atomic ``deduct_with_allowance`` RPC (contract §2).
 
@@ -206,7 +207,7 @@ class PostgresStore(CreditStore):
             with conn.cursor() as cur:
                 cur.callproc(
                     "deduct_with_allowance",
-                    [user_id, amount, idempotency_key, min_balance, model, json.dumps(meta)],
+                    [user_id, amount, idempotency_key, min_balance, model, json.dumps(meta), skip_allowance],
                 )
                 row = cur.fetchone()
             conn.commit()
@@ -314,6 +315,7 @@ class PostgresStore(CreditStore):
         min_balance: Decimal = Decimal(0),
         model: str | None = None,
         metadata: CreditMetadata | None = None,
+        skip_allowance: bool = False,
     ) -> DeductionResult:
         amount = _dec(amount)
         min_balance = _dec(min_balance)
@@ -323,7 +325,7 @@ class PostgresStore(CreditStore):
             with conn.cursor() as cur:
                 cur.callproc(
                     "settle_lease",
-                    [user_id, lease_id, amount, idempotency_key, min_balance, model, json.dumps(meta)],
+                    [user_id, lease_id, amount, idempotency_key, min_balance, model, json.dumps(meta), skip_allowance],
                 )
                 row = cur.fetchone()
             conn.commit()

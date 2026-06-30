@@ -437,3 +437,94 @@ class TestPropertyInvariant:
             assert avail.reserved == expected_reserved
             assert avail.available == expected_balance - expected_reserved
             assert avail.balance >= Decimal(0)  # strict floor never breached
+
+
+# ── Fix 1: create_lease allowance-aware admission ───────────────────────────
+
+
+class TestAllowanceAwareAdmissionStore:
+    """Store-level create_lease must add remaining free allowance to available
+    headroom so free-tier users can hold worst-case amounts that exceed their
+    cash balance (Fix 1 / D4)."""
+
+    def _store_with_plan(self, allowance: Decimal) -> MemoryStore:
+        store = MemoryStore()
+        v2 = PricingConfigData(
+            models={"_default": "input_tokens * 1"},
+            min_balance=Decimal(0),
+            plans={"free": PlanDefinition(id="free", name="Free", free_allowance=allowance)},
+        )
+        store.set_active_pricing(v2)
+        return store
+
+    def test_create_lease_admits_when_allowance_covers_hold(self) -> None:
+        """balance=20, allowance=80, hold=90 → effective_available=100 ≥ 90 → admitted."""
+        store = self._store_with_plan(Decimal(80))
+        store.add_credits("u1", Decimal(20))
+        store.set_user_plan("u1", "free")
+
+        lease = store.create_lease("u1", Decimal(90), "usage", floor=Decimal(0))
+        assert lease.error is None
+        assert lease.lease_id
+
+    def test_create_lease_rejects_when_still_insufficient(self) -> None:
+        """balance=10, allowance=20, hold=50 → effective_available=30 < 50 → rejected."""
+        store = self._store_with_plan(Decimal(20))
+        store.add_credits("u1", Decimal(10))
+        store.set_user_plan("u1", "free")
+
+        lease = store.create_lease("u1", Decimal(50), "usage", floor=Decimal(0))
+        assert lease.error == "insufficient_credits"
+
+    def test_create_lease_planless_user_uses_balance_only(self) -> None:
+        """Planless user gets no allowance headroom — same behaviour as before."""
+        store = MemoryStore()
+        store.add_credits("u1", Decimal(20))
+
+        lease = store.create_lease("u1", Decimal(30), "usage", floor=Decimal(0))
+        assert lease.error == "insufficient_credits"
+
+    def test_allowance_fully_consumed_admission_falls_back_to_balance(self) -> None:
+        """Once allowance is exhausted, admission reverts to cash balance only."""
+        store = self._store_with_plan(Decimal(30))
+        store.add_credits("u1", Decimal(20))
+        store.set_user_plan("u1", "free")
+        # Exhaust the allowance via the usage window.
+        store.increment_usage_window("u1", "free", Decimal(30))
+
+        # Now effective_available = 20 (only balance, allowance gone).
+        lease = store.create_lease("u1", Decimal(30), "usage", floor=Decimal(0))
+        assert lease.error == "insufficient_credits"
+
+
+# ── Fix 9: idempotent settle replay returns original balance_after ───────────
+
+
+class TestSettleIdempotencyBalanceAfter:
+    """settle_lease idempotent replay must return the balance at settlement
+    time, not the current live balance (Fix 9)."""
+
+    def _setup(self) -> tuple[MemoryStore, str]:
+        store = MemoryStore()
+        store.add_credits("u1", Decimal(100))
+        return store, "u1"
+
+    def test_settle_idempotent_replay_stable_after_credit_added(self) -> None:
+        store, uid = self._setup()
+        lease = store.create_lease(uid, Decimal(30), "usage", floor=Decimal(0))
+        assert lease.error is None
+
+        # Original settle: balance 100 → 90 (charged 10).
+        d1 = store.settle_lease(uid, lease.lease_id, Decimal(10), idempotency_key="settle-1")
+        assert d1.balance_after == Decimal(90)
+
+        # Intervening event: add 50 more credits (live balance now 140).
+        store.add_credits(uid, Decimal(50))
+        assert store.get_balance(uid).balance == Decimal(140)
+
+        # Re-create a fresh lease for the same amount so settle_lease can be called.
+        # But first replay the ORIGINAL settle via idempotency_key.
+        # Since the lease is already settled, replay via idempotency_key lookup.
+        d2 = store.settle_lease(uid, lease.lease_id, Decimal(10), idempotency_key="settle-1")
+        assert d2.idempotent is True
+        assert d2.balance_after == Decimal(90)  # original, not 140

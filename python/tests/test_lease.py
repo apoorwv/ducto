@@ -432,3 +432,104 @@ class TestMisc:
         actual = UsageMetrics(model="gpt-4", input_tokens=500, output_tokens=200)  # cost 11
         ded = m.settle("u1", lease.lease_id, actual)
         assert ded.balance_after == Decimal("89.00")
+
+    def test_reserve_with_explicit_model_kwarg(self, store: MemoryStore) -> None:
+        """reserve(user, Decimal, model='gpt-4') must capture model even without UsageMetrics (Fix 5)."""
+        m = CreditManager(store=store, policy="strict_prepaid")
+        m.publish_pricing_from_dict({"models": {"_default": "input_tokens * 1"}, "min_balance": 0})
+        store.add_credits("u1", Decimal(100))
+
+        # Raw Decimal amount + explicit model= kwarg.
+        lease = m.reserve("u1", Decimal(30), model="gpt-4")
+        assert lease.amount == Decimal(30)
+        # Settle returns valid result — model info was threaded through, no errors.
+        ded = m.settle("u1", lease.lease_id, Decimal(10))
+        assert ded.amount == Decimal(10)
+        assert ded.balance_after == Decimal(90)
+
+
+# ── Fix 1: allowance-aware admission ────────────────────────────────────────
+
+
+class TestAllowanceAwareAdmission:
+    """create_lease must count remaining free allowance toward available headroom
+    so a free-tier user can hold a worst-case amount even when cash balance is
+    below the hold amount (Fix 1)."""
+
+    def _manager_with_allowance(self, store: MemoryStore, allowance: Decimal) -> CreditManager:
+        m = CreditManager(store=store, policy="strict_prepaid")
+        m.publish_pricing(
+            PricingConfigData(
+                models={"_default": "input_tokens * 1"},
+                min_balance=Decimal(0),
+                plans={"free": PlanDefinition(id="free", name="Free", free_allowance=allowance)},
+            )
+        )
+        return m
+
+    def test_admission_succeeds_when_allowance_covers_hold(self, store: MemoryStore) -> None:
+        """Balance 20, allowance 100 → can hold 80 (20 + 100 > 80)."""
+        m = self._manager_with_allowance(store, Decimal(100))
+        store.add_credits("u1", Decimal(20))
+        store.set_user_plan("u1", "free")
+
+        lease = m.reserve("u1", Decimal(80))
+        assert lease.amount == Decimal(80)
+
+    def test_admission_fails_when_allowance_plus_balance_still_insufficient(
+        self, store: MemoryStore
+    ) -> None:
+        """Balance 10, allowance 20 → cannot hold 50 (10 + 20 = 30 < 50)."""
+        m = self._manager_with_allowance(store, Decimal(20))
+        store.add_credits("u1", Decimal(10))
+        store.set_user_plan("u1", "free")
+
+        with pytest.raises(InsufficientCreditsError):
+            m.reserve("u1", Decimal(50))
+
+    def test_admission_without_plan_uses_balance_only(self, store: MemoryStore) -> None:
+        """Planless user: admission falls back to raw balance, no phantom allowance added."""
+        m = _strict_manager(store, min_balance=Decimal(0))
+        store.add_credits("u1", Decimal(20))
+
+        # 20 available, asking for 30 — must fail (no plan, no allowance).
+        with pytest.raises(InsufficientCreditsError):
+            m.reserve("u1", Decimal(30))
+
+
+# ── Fix 1 / Fix 6: can_afford includes allowance in the available figure ────
+
+
+class TestCanAffordWithAllowance:
+    """can_afford() must reflect the allowance headroom so UI advisories match
+    what reserve() will actually admit (Fix 1 / Fix 6)."""
+
+    def _manager_with_allowance(self, store: MemoryStore, allowance: Decimal) -> CreditManager:
+        m = CreditManager(store=store, policy="strict_prepaid")
+        m.publish_pricing(
+            PricingConfigData(
+                models={"_default": "input_tokens * 1"},
+                min_balance=Decimal(0),
+                plans={"free": PlanDefinition(id="free", name="Free", free_allowance=allowance)},
+            )
+        )
+        return m
+
+    def test_can_afford_includes_allowance_in_available(self, store: MemoryStore) -> None:
+        m = self._manager_with_allowance(store, Decimal(100))
+        store.add_credits("u1", Decimal(20))
+        store.set_user_plan("u1", "free")
+
+        # Effective available = 20 (balance) + 100 (allowance) = 120, hold 80 → affordable.
+        result = m.can_afford("u1", Decimal(80))
+        assert result.affordable is True
+
+    def test_can_afford_returns_false_when_truly_insufficient(self, store: MemoryStore) -> None:
+        m = self._manager_with_allowance(store, Decimal(20))
+        store.add_credits("u1", Decimal(10))
+        store.set_user_plan("u1", "free")
+
+        # Effective available = 30, hold 50 → not affordable.
+        result = m.can_afford("u1", Decimal(50))
+        assert result.affordable is False
+        assert result.reason == "insufficient_credits"
