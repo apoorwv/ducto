@@ -5,33 +5,61 @@ Orchestrates the credit lifecycle. The hot path (`deduct()`) calculates the cost
 ## Constructor
 
 ```python
+CreditManager(
+    store,
+    engine=None,
+    emitter=None,
+    low_balance_threshold=None,
+    *,
+    policy="strict_prepaid",
+    overdraft_floor=None,
+    max_concurrent=None,
+    low_balance_thresholds=None,
+    on_low_balance=None,
+    default_ttl_seconds=600,
+)
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `store` | `CreditStore` | required | Store adapter (MemoryStore, HttpxSupabaseStore, PostgresStore, etc.) |
+| `engine` | `PricingEngine \| None` | `None` | Pre-configured pricing engine. If omitted, call `load_pricing_from_store()` or `publish_pricing_from_dict()` before `deduct()`. |
+| `emitter` | `CreditEventEmitter \| None` | `None` | Event emitter for credit lifecycle events. |
+| `low_balance_threshold` | `Decimal \| None` | `None` | **Simple single-level.** Absolute balance at or below which a deduction crossing it emits `credits.low_balance` (edge-triggered). When `None`, defaults to `min_balance * 2`. Ignored when `low_balance_thresholds` is set. |
+| `policy` | `str` | `"strict_prepaid"` | Financial-safety preset for planless users: `"strict_prepaid"` (floor ≥ 0, zero debt) or `"overdraft"` (admits to a negative floor). |
+| `overdraft_floor` | `Decimal \| None` | `None` | Negative admission floor when `policy="overdraft"`. |
+| `max_concurrent` | `int \| None` | `None` | Default maximum simultaneously-active leases per operation type. |
+| `low_balance_thresholds` | `list[Decimal] \| None` | `None` | **Multi-level.** List of thresholds (e.g. `[50, 20, 10]`) for graduated low-balance signals. Each level fires once per descent and re-arms only after the balance rises back above it. Takes precedence over `low_balance_threshold`. |
+| `on_low_balance` | `Callable[[CreditEvent], None] \| None` | `None` | Non-blocking callback invoked on low-balance events. Exceptions from the handler are caught and logged — never break the deduction. |
+| `default_ttl_seconds` | `int` | `600` | Default lease TTL for `reserve()` and `run_billed()`. |
+
+```python
 from ducto import CreditManager
 from ducto.interface.memory import MemoryStore
+from decimal import Decimal
 
 store = MemoryStore()
 manager = CreditManager(store=store)
 ```
 
-Optionally pass a pre-configured `PricingEngine`, a `CreditEventEmitter`, and/or a `low_balance_threshold`:
+## Schema Setup
+
+### `setup() -> SetupResult`
+
+Run bundled SQL migrations through the store (creates tables, indexes, RPCs). Delegates to `store.setup()`. Idempotent — safe to call on every deploy.
 
 ```python
-from decimal import Decimal
-from ducto.events import CreditEventEmitter
-
-emitter = CreditEventEmitter()
-manager = CreditManager(
-    store=store,
-    engine=engine,
-    emitter=emitter,
-    low_balance_threshold=Decimal("25"),  # absolute floor for the edge-triggered alert
-)
+result = manager.setup()
+assert result.success, result.errors
 ```
 
-`low_balance_threshold` is the absolute balance at or below which a deduction that *crosses* it emits `credits.low_balance` (edge-triggered). When omitted it defaults to `min_balance * 2`.
+Returns `SetupResult` with `tables_created`, `rpcs_created`, and `errors`. `result.success` is `True` when `errors` is empty.
 
 ## Pricing
 
 ### `publish_pricing_from_dict(data)`
+
+Load pricing from a raw `dict` or `PricingConfigData`, build the internal engine, and persist the config to the store via `set_active_pricing`.
 
 ```python
 manager.publish_pricing_from_dict({
@@ -42,21 +70,27 @@ manager.publish_pricing_from_dict({
 
 ### `load_pricing_from_store()`
 
-Fetch active pricing from the database store.
+Fetch the active pricing config from the store and build the internal `PricingEngine`. Raises `PricingNotLoadedError` if no active config exists in the store.
 
 ### `publish_pricing(config, label=None)`
 
-Load from a `PricingConfigData` object.
+Publish a `PricingConfigData` object as the active config and rebuild the internal engine. Optional `label` for version tagging.
 
 ## Balance Operations
 
-### `add_credits(user_id, amount, type="adjustment", metadata=None, expires_at=None)`
+### `add_credits(user_id, amount, tx_type="adjustment", metadata=None, expires_at=None) -> AddCreditsResult`
 
-Add credits. Optional `expires_at` for time-bound credits.
+Add credits to a user's account. `amount` is a `Decimal` (or `int`). `tx_type` is the transaction label (e.g. `"purchase"`, `"adjustment"`). `expires_at` sets an expiry datetime for time-bound credits. Emits `credits.added`. Also re-arms any multi-level low-balance thresholds that the new balance rises above.
 
-### `get_balance(user_id)`
+Returns `AddCreditsResult` with `transaction_id`, `amount`, `new_balance`, `lifetime_purchased`.
 
-### `reserve_credits(user_id, amount, op_type="usage", metadata=None, min_balance=None)`
+### `get_balance(user_id) -> BalanceResult`
+
+Return `BalanceResult` with `balance` and `lifetime_purchased`.
+
+### `reserve_credits(user_id, amount, operation_type="usage", metadata=None, min_balance=None) -> ReserveResult`
+
+**Legacy admission path.** Reserve credits for a pending operation. Prefer the `reserve()`/`settle()`/`release()` lease lifecycle for new code. Returns `ReserveResult`; the `reservation_id` must be passed to `store.deduct_credits()` to finalize.
 
 ### `deduct(user_id, metrics, idempotency_key=None, metadata=None)`
 
@@ -70,17 +104,23 @@ Deduct a fixed cost (configured in pricing `fixed` section). Raises `ValueError`
 
 Plans provide free monthly allowances consumed before balance deductions.
 
-### `store.set_user_plan(user_id, plan_id)`
+### `set_user_plan(user_id, plan_key) -> SetUserPlanResult`
 
-Assign a plan to a user.
+Assign a plan to a user. Emits `credits.plan_changed`. `plan_key` must match a plan `id` in the active pricing config (e.g. `"pro"`).
 
-### `store.get_user_plan(user_id)`
+### `get_user_plan(user_id) -> GetUserPlanResult`
 
-Get user's current plan details.
+Fetch a user's current plan. Returns `GetUserPlanResult` with `plan_id`, `plan_name`, `free_allowance`, `features`, `default_billing_mode`, `per_operation`, `max_concurrent`, and `overdraft_floor`.
+
+### `check_feature(user_id, feature) -> CheckFeatureResult`
+
+Check whether a user's plan has a specific feature entitlement. Returns `CheckFeatureResult` with `.has_feature` (bool) and `.value`. Does **not** raise `FeatureNotEntitledError` — inspect `.has_feature` to gate functionality. (`reserve()` raises `FeatureNotEntitledError` when `required_feature` is set and the user lacks it.)
+
+Feature presence rules: `absent`/`None`/`False` → `has_feature=False`; `True`, any numeric (including `0`), any string (including `""`) → `has_feature=True`.
 
 ### `store.check_allowance(user_id)`
 
-Get remaining free allowance for the current billing period.
+Get remaining free allowance for the current billing period (store-level, not on the manager).
 
 Example — full plan coverage skips balance deduction:
 
@@ -115,19 +155,7 @@ assert result.new_balance == Decimal("100")
 
 The recommended pattern for charge-after billing: an atomic **lease** (hold) is taken *before* the work against `available = balance − Σ(active holds)`, then the actual cost is **settled** (or the hold **released**). `reserve` is the only admission gate; `settle` is de-clamped (always bills the actual cost). See the [Financial Safety](/docs/financial-safety) page for the full conceptual guide.
 
-### Constructor options
-
-```python
-manager = CreditManager(
-    store,
-    policy="strict_prepaid",            # "strict_prepaid" (default) | "overdraft"
-    overdraft_floor=Decimal("-50"),     # negative floor (overdraft preset)
-    max_concurrent=4,                   # default max active leases per operation type
-    low_balance_thresholds=[Decimal("50"), Decimal("20"), Decimal("10")],
-    on_low_balance=reload_hook,         # async-safe, non-blocking reload/notify hook
-    default_ttl_seconds=600,            # lease TTL
-)
-```
+The `policy`, `overdraft_floor`, `max_concurrent`, `low_balance_thresholds`, `on_low_balance`, and `default_ttl_seconds` constructor params control the lease/financial-safety behavior. See the [Constructor](#constructor) section for the full parameter table.
 
 - **`strict_prepaid`** (default) — floor `≥ 0`, structurally zero debt; size holds at the worst case.
 - **`overdraft`** — admits down to a negative `overdraft_floor`; `settle` bills the full actual cost even past it (reconcile with `add_credits`).
@@ -165,8 +193,6 @@ lease = manager.reserve("user_1", Decimal("40"), operation_type="chat")  # worst
 deduction = manager.settle("user_1", lease.lease_id, Decimal("11"))      # actual cost
 assert deduction.balance_after == manager.get_balance("user_1").balance
 ```
-
-New errors importable from `ducto`: `CreditError` (base), `ConcurrencyLimitError`, `FeatureNotEntitledError`, `LeaseExpiredError`, `LeaseNotFoundError` (plus existing `InsufficientCreditsError`, `CapReachedError`). New events: `credits.reserved`, `credits.reservation_released`, `credits.lease_expired`, `credits.overdraft`. `PlanDefinition` gained `default_billing_mode`, `per_operation: dict[str, OperationPolicy]`, `max_concurrent`, `overdraft_floor`.
 
 ## Usage Analytics
 
@@ -261,6 +287,8 @@ def handle_deduct(event: CreditEvent):
 # | "credits.refunded" | "credits.refund_failed" | "credits.expired"
 # | "credits.cap_reached" | "credits.cap_warning"
 # | "credits.low_balance" | "credits.plan_changed"
+# | "credits.reserved" | "credits.reservation_released"
+# | "credits.lease_expired" | "credits.overdraft"
 ```
 
 Success events fire only after the operation commits; failures fire dedicated `*_failed` events. Handler exceptions are isolated and never break the deduction. Event timestamps are timezone-aware UTC.

@@ -82,9 +82,28 @@ Any failure rolls back the allowance consumption **and** the balance change toge
 
 The previous design issued four independent store calls (consume allowance → check cap → reserve → deduct) with no spanning transaction and idempotency checked *last*. That allowed double-consumed allowance on retry, stranded reservations, and racy cap bypass under concurrency. Consolidating into `deduct_with_allowance` makes the hot path transactional and idempotent end-to-end. Money columns were also widened to `NUMERIC(18,4)` (migration 014) and all windows are pinned to UTC for determinism.
 
-### Two-phase reserve/deduct (legacy, fixed but kept)
+### Lease lifecycle: reserve → settle / release / renew
 
-The `reserve_credits` + `deduct_credits` pair is retained for callers that genuinely need a reserve-then-finalize flow. It was hardened: `deduct_credits` now looks up the reservation `FOR UPDATE`, verifies it exists and is unexpired, and clamps the deducted amount to the reserved amount — so a `reserve(10)` can no longer be finalized as a `deduct(1000)`. Reserve semantics (reject when `available - amount < min_balance`, no silent capping) are identical between the SQL stores and `MemoryStore`.
+For streaming and agentic jobs — where the actual cost is not known upfront — the `CreditManager` exposes a full lease lifecycle:
+
+```
+reserve(user_id, estimate)   → LeaseResult (lease_id, hold placed on balance)
+    │
+    ├── work runs; call renew(lease_id) periodically for long jobs
+    │
+    ├── settle(user_id, lease_id, actual)  → DeductionResult
+    │       Bills the ACTUAL cost. Capped to the reserved amount in strict mode;
+    │       bills full actual in overdraft. Never blocks on floor/cap at settle.
+    │
+    └── release(user_id, lease_id)         → ReleaseResult
+            Cancels without charging (work aborted). Idempotent.
+```
+
+`run_billed(user_id, estimate=…, do_work=…)` is a one-call shortcut that wires the full cycle: it reserves, calls `do_work()`, settles on success, and releases on any exception.
+
+`reserve` enforces admission atomically: `FOR UPDATE` on the balance row, concurrency cap, spend cap, balance floor, and feature entitlement — all checked inside a single transaction before the hold is granted. A crash between `reserve` and `settle` is covered by the lease TTL; the store sweeper reaps expired leases automatically.
+
+The lower-level `reserve_credits` + `deduct_credits` pair (column-level reservation) is also retained but does not carry the full policy and concurrency machinery of `reserve`/`settle`.
 
 ### Low-balance alerts
 
@@ -99,7 +118,7 @@ After a successful deduction the manager may emit `credits.low_balance`. The thr
 
 ## Events
 
-`CreditEventEmitter` is an optional typed pub/sub injected into `CreditManager`. Success events fire only **after** the underlying operation commits (`not result.error`); failures fire dedicated failure events. Handler exceptions are isolated and never break the main flow. Available event types: `credits.deducted`, `credits.deduct_failed`, `credits.added`, `credits.refunded`, `credits.refund_failed`, `credits.expired`, `credits.cap_reached`, `credits.cap_warning`, `credits.low_balance`, `credits.plan_changed`. Event timestamps are timezone-aware UTC.
+`CreditEventEmitter` is an optional typed pub/sub injected into `CreditManager`. Success events fire only **after** the underlying operation commits (`not result.error`); failures fire dedicated failure events. Handler exceptions are isolated and never break the main flow. Available event types: `credits.deducted`, `credits.deduct_failed`, `credits.added`, `credits.refunded`, `credits.refund_failed`, `credits.expired`, `credits.cap_reached`, `credits.cap_warning`, `credits.low_balance`, `credits.plan_changed`, `credits.reserved`, `credits.reservation_released`, `credits.lease_expired`, `credits.overdraft`. Event timestamps are timezone-aware UTC.
 
 ## Expression Safety — Python
 

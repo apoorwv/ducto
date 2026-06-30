@@ -19,7 +19,7 @@ const engine = PricingEngine.fromDict({
 
 ## Methods
 
-### `calculate(metrics: UsageMetricsLike): CostBreakdown`
+### `calculate(metrics: UsageMetrics): CostBreakdown`
 
 ```typescript
 const cost = engine.calculate({
@@ -33,7 +33,7 @@ console.log(`Model credits: ${cost.modelCredits.toString()}`);
 console.log(`Tool credits: ${cost.toolCredits.toString()}`);
 ```
 
-### `calculateBatch(metrics: UsageMetricsLike[]): CostBreakdown[]`
+### `calculateBatch(metrics: UsageMetrics[]): CostBreakdown[]`
 
 Evaluate multiple metrics at once.
 
@@ -53,7 +53,7 @@ Get the fixed cost for a named job. Returns `null` for an unknown/unconfigured j
 
 Get the raw pricing config dict.
 
-### `minBalance: Decimal`
+### `minBalance: number`
 
 The configured minimum balance floor.
 
@@ -71,9 +71,9 @@ The configured minimum balance floor.
 | `fixedCredits` | `Decimal` | Fixed job cost (`0` when not applicable) |
 | `breakdown` | `Record<string, unknown>` | Debug info |
 
-## UsageMetricsLike
+## UsageMetrics
 
-Input to `calculate()`:
+Input to `calculate()` (exported as `UsageMetrics` from `@apoorwv/ducto`):
 
 | Field | Type | Default |
 |-------|------|---------|

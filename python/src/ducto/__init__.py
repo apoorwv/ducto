@@ -17,6 +17,7 @@ from ducto.interface.memory import MemoryStore
 from ducto.interface.models import (
     AddCreditsResult,
     AddTeamMemberResult,
+    AggregateStatsRow,
     AllowanceResult,
     AvailableResult,
     BalanceResult,
@@ -64,6 +65,7 @@ from ducto.metrics import ToolCall, UsageMetrics
 __all__ = [
     "AddCreditsResult",
     "AddTeamMemberResult",
+    "AggregateStatsRow",
     "AllowanceResult",
     "AvailableResult",
     "BalanceResult",

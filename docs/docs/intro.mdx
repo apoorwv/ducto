@@ -6,7 +6,7 @@ sidebar_position: 1
 
 Add usage-based credits to your AI SaaS in minutes — not weeks.
 
-ducto is a drop-in credit calculation engine. Define pricing as math expressions (per-model, per-tool, search/RAG, cache, fixed jobs), connect a database, and start deducting credits.
+ducto is a drop-in credit calculation engine. Define pricing as math expressions (per-model, per-tool, search/RAG, cache, fixed jobs), connect a database, and start deducting credits. For streaming and agentic workloads, the lease pattern (`reserve → settle / release`) lets you hold credits during execution and bill the actual cost at the end — with atomic admission control and no double-charges.
 
 ## Installation
 
@@ -98,7 +98,7 @@ result = manager.deduct(
     metrics=UsageMetrics(model="gpt-4", input_tokens=500, output_tokens=200),
     idempotency_key="chat_session_42",
 )
-print(f"Deducted {abs(result.amount)} credits. Balance: {result.balance_after}")
+print(f"Deducted {result.amount} credits. Balance: {result.balance_after}")
 ```
 
 ```typescript
@@ -125,6 +125,7 @@ const result = await manager.deduct(
 
 - [Expression Reference](/docs/expressions) — complete syntax and available variables
 - [Pricing Configuration](/docs/configuration) — structuring your pricing config
+- [Financial Safety (Leases)](/docs/financial-safety) — atomic reserve → settle lifecycle, presets, and zero-debt guarantees
 - [Storage Backends](/docs/storage-backends) — Supabase, PostgreSQL, or in-memory
 - [CLI Reference](/docs/cli) — migration and pricing commands
 - [Architecture](/docs/architecture) — how ducto works under the hood

@@ -15,12 +15,13 @@ manager = CreditManager(store=store)
 
 No dependencies beyond `ducto`.
 
-Full `CreditStore` interface (29 abstract methods + the concrete `check_feature`). All money arguments and result fields are `Decimal`:
+Full `CreditStore` interface. All money arguments and result fields are `Decimal`:
 
 | Category | Methods |
 |----------|---------|
 | Setup | `setup(database_url?)` |
 | Balances | `get_balance(user_id)`, `add_credits(user_id, amount, type?, metadata?, expires_at?)`, `deduct_with_allowance(user_id, amount, *, idempotency_key?, min_balance?, model?, metadata?)`, `reserve_credits(user_id, amount, op_type?, metadata?, min_balance?)`, `deduct_credits(user_id, reservation_id, amount, idempotency_key?, metadata?)` |
+| Lease lifecycle | `create_lease(user_id, amount, operation_type, *, billing_mode?, floor?, max_concurrent?, ttl_seconds?, model?, overdraft_floor?, metadata?)`, `settle_lease(user_id, lease_id, amount, *, idempotency_key?, min_balance?, model?, metadata?)`, `release_lease(user_id, lease_id)`, `renew_lease(user_id, lease_id, ttl_seconds)`, `get_available(user_id)` |
 | Pricing | `get_active_pricing()`, `set_active_pricing(config, label?)`, `get_pricing_history()`, `get_pricing_config(version)`, `activate_pricing(version)` |
 | Plans | `get_user_plan(user_id)`, `check_feature(user_id, feature)`, `set_user_plan(user_id, plan_id)`, `check_allowance(user_id)`, `increment_usage_window(user_id, plan_id, amount)` |
 | Spend caps | `check_spend_cap(user_id, model?, amount?)` |
@@ -30,6 +31,8 @@ Full `CreditStore` interface (29 abstract methods + the concrete `check_feature`
 | Teams | `create_team(name, initial_balance?)`, `get_team_balance(team_id)`, `add_team_member(team_id, user_id, role?, spend_cap?)`, `get_team_members(team_id)`, `deduct_team(team_id, user_id, amount, metadata?, idempotency_key?)` |
 
 `deduct_with_allowance` is the atomic deduction path used by `CreditManager.deduct()`: it consumes free allowance, enforces spend caps and the balance floor, and debits the net — all in one transaction, idempotency-keyed. The `MemoryStore` guards every method with a re-entrant lock so this is atomic in-process too.
+
+The **lease lifecycle** methods (`create_lease`, `settle_lease`, `release_lease`, `renew_lease`, `get_available`) back the manager's `reserve()`/`settle()`/`release()`/`renew()`/`get_available()` API. Custom store implementations must implement all abstract methods; `check_feature` has a default implementation (calls `get_user_plan()` and inspects `features`) and may be overridden for optimized queries.
 
 ## HttpxSupabaseStore
 

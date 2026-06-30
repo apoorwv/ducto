@@ -20,26 +20,36 @@ npm install js-yaml
 
 ## Core Classes
 
-| Class | Description |
-|-------|-------------|
-| [`PricingEngine`](/docs/javascript-api/pricing-engine) | Pure calculation layer |
-| [`CreditManager`](/docs/javascript-api/credit-manager) | Orchestrates credit lifecycle |
-| [`MemoryStore`](/docs/javascript-api/stores) | In-memory store for testing |
-| [`HttpxSupabaseStore`](/docs/javascript-api/stores) | Supabase-backed store (native `fetch`) |
-| [`PostgresStore`](/docs/javascript-api/stores) | Direct PostgreSQL via `pg` |
-| `UsageMetrics` | Input interface for calculation |
-| `CostBreakdown` | Structured calculation result |
+| Class / Type | Exported from | Description |
+|---|---|---|
+| [`PricingEngine`](/docs/javascript-api/pricing-engine) | `@apoorwv/ducto` | Pure calculation layer — no DB dependency |
+| [`CreditManager`](/docs/javascript-api/credit-manager) | `@apoorwv/ducto` | Orchestrates credit lifecycle |
+| [`HttpxSupabaseStore`](/docs/javascript-api/stores) | `@apoorwv/ducto` | Supabase-backed store (native `fetch`, no extra deps) |
+| [`PostgresStore`](/docs/javascript-api/stores) | `@apoorwv/ducto` | Direct PostgreSQL via `pg` |
+| [`MemoryStore`](/docs/javascript-api/stores) | `@apoorwv/ducto/node` | In-memory store for testing (Node.js only) |
+| `CreditEventEmitter` | `@apoorwv/ducto` | Typed pub/sub for credit lifecycle events |
+| `UsageMetrics` | `@apoorwv/ducto` | Input interface for `calculate()` / `deduct()` |
+| `CostBreakdown` | `@apoorwv/ducto` | Structured cost breakdown (all fields `Decimal`) |
+| `CreditManagerOptions` | `@apoorwv/ducto` | Constructor options (policy, thresholds, TTL, …) |
+| `PricingConfigData` | `@apoorwv/ducto` | Schema for a pricing config dict |
+| `DeductionResult` | `@apoorwv/ducto` | Return type of `deduct()` / `settle()` |
+| `LeaseResult` | `@apoorwv/ducto` | Return type of `reserve()` / `renew()` |
+| `BalanceResult` | `@apoorwv/ducto` | Return type of `getBalance()` |
+| `CanAffordResult` | `@apoorwv/ducto` | Return type of `canAfford()` |
+
+All money values (balances, amounts, costs) are `Decimal` from `decimal.js`, never binary `number`.
 
 ## Quick Example
 
 ```typescript
-import { CreditManager, MemoryStore } from "@apoorwv/ducto";
+import { CreditManager, PostgresStore } from "@apoorwv/ducto";
+// For tests / local dev, use MemoryStore from the Node subpath:
+import { MemoryStore } from "@apoorwv/ducto/node";
 
 const store = new MemoryStore();
 const manager = new CreditManager(store);
 
-manager.publishPricingFromDict({
-  version: 1,
+await manager.publishPricingFromDict({
   models: { "gpt-4": "input_tokens * (0.01 / 1000) + output_tokens * (0.03 / 1000)" },
 });
 
@@ -49,5 +59,6 @@ const result = await manager.deduct(
   { model: "gpt-4", inputTokens: 500, outputTokens: 200 },
   "idempotency-key-123",
 );
-console.log(`Deducted ${Math.abs(result.amount)} credits`);
+// result.amount is a Decimal — use .toString() or .toNumber()
+console.log(`Deducted ${result.amount.toString()} credits`);
 ```

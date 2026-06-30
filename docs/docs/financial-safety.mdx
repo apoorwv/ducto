@@ -85,6 +85,8 @@ console.log(deduction.amount.toString(), deduction.balanceAfter.toString());
 
 `reserve` raises/throws `InsufficientCreditsError`, `ConcurrencyLimitError`, `CapReachedError`, or `FeatureNotEntitledError` on admission failure. `settle` raises/throws `LeaseExpiredError` or `LeaseNotFoundError`. `release` is idempotent and returns a `ReleaseResult` with `released` and `reason` (`released` / `already_released` / `already_settled` / `not_found`) — it never raises on a missing or already-finalized lease.
 
+All of these exception types are subclasses of `CreditError`, so you can catch any lease-lifecycle failure with `except CreditError` (Python) or a single `catch (e)` checking `e instanceof CreditError` (JavaScript) while still distinguishing specific subclasses.
+
 ### Renewing long jobs
 
 Leases have a TTL (`defaultTtlSeconds`, 600s by default; override per call with `ttl`). For long batch or agentic jobs, extend the hold with `renew` so it does not expire mid-work. A crash between reserve and settle is covered by the TTL (and the store's reaper), so a dropped lease never permanently strands credits.
@@ -256,7 +258,7 @@ manager = CreditManager(
 ```
 
 ```typescript
-const manager = new CreditManager(store, null, emitter, {
+const manager = new CreditManager(store, null, null, {
   lowBalanceThresholds: [new Decimal(50), new Decimal(20), new Decimal(10)],
   onLowBalance: (event) => {
     // provider-agnostic reload / notify
@@ -276,3 +278,5 @@ New lifecycle events join the existing ones: `credits.reserved`, `credits.reserv
 
 - Notebook: **Financial Safety** (runnable, PostgreSQL-backed) — [/docs/notebooks/financial_safety](/docs/notebooks/financial_safety)
 - [CreditManager — Python](/docs/python-api/credit-manager) · [CreditManager — JavaScript](/docs/javascript-api/credit-manager)
+- [Storage Backends](/docs/storage-backends) — choosing and configuring a store
+- [Pricing Configuration](/docs/configuration) — expression syntax, plan definitions, and `OperationPolicy` fields
