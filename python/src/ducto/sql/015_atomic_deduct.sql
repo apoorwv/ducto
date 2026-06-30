@@ -186,8 +186,8 @@ BEGIN
         WHERE user_id = p_user_id
         RETURNING balance INTO v_new_balance;
 
-        INSERT INTO public.credit_transactions (user_id, amount, type, metadata)
-        VALUES (p_user_id, -v_net, 'usage', v_metadata)
+        INSERT INTO public.credit_transactions (user_id, amount, type, reference_type, metadata)
+        VALUES (p_user_id, -v_net, 'usage', p_metadata->>'reference_type', v_metadata)
         RETURNING id INTO v_transaction_id;
 
     EXCEPTION

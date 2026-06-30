@@ -167,8 +167,8 @@ BEGIN
         || jsonb_strip_nulls(jsonb_build_object('idempotency_key', p_idempotency_key, 'model', p_model))
         || jsonb_build_object('allowance_consumed', v_consume, 'balance_after', v_new_balance);
 
-    INSERT INTO public.credit_transactions (user_id, amount, type, metadata)
-    VALUES (p_user_id, -v_net, 'usage', v_metadata) RETURNING id INTO v_tx_id;
+    INSERT INTO public.credit_transactions (user_id, amount, type, reference_type, metadata)
+    VALUES (p_user_id, -v_net, 'usage', p_metadata->>'reference_type', v_metadata) RETURNING id INTO v_tx_id;
 
     UPDATE public.credit_reservations SET status = 'settled', settle_tx_id = v_tx_id WHERE id = p_lease_id;
 
