@@ -726,6 +726,9 @@ describe.runIf(DATABASE_URL)("PostgresStore integration (real Postgres 16)", () 
     await pool.query("DELETE FROM public.user_credits");
     await pool.query("DELETE FROM public.credit_plans");
     await pool.query(`INSERT INTO auth.users (id) VALUES ($1) ON CONFLICT DO NOTHING`, [USER_H10]);
+    // Signup bonus trigger on auth.users INSERT grants 50 free credits. Clear it
+    // so the test starts from a known zero balance.
+    await pool.query(`DELETE FROM public.user_credits WHERE user_id = $1`, [USER_H10]);
 
     const pgStore = new PostgresStore(DATABASE_URL!, pg.Pool);
     const memStore = new MemoryStore();

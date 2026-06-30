@@ -20,7 +20,7 @@ COPY src ./src
 RUN pip install --no-cache-dir build \
     && python -m build --wheel --outdir /tmp/dist \
     && WHEEL="$(ls /tmp/dist/*.whl)" \
-    && pip install --no-cache-dir --prefix=/install "${WHEEL}[supabase]"
+    && pip install --no-cache-dir --prefix=/install "${WHEEL}[supabase,postgres]"
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
 FROM python:3.12.7-slim-bookworm AS runtime

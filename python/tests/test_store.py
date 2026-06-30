@@ -982,7 +982,7 @@ class TestListUserTransactionsPagination:
 
 
 class TestCheckFeatureZeroValues:
-    def _make_store_with_features(self, features: dict) -> "MemoryStore":
+    def _make_store_with_features(self, features: dict) -> MemoryStore:
         from ducto.interface.models import PlanDefinition, PricingConfigData
 
         store = MemoryStore()

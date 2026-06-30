@@ -586,16 +586,12 @@ class TestNestedFunctionCalls:
 
     def test_max_of_ceil(self) -> None:
         # ceil(500 * 0.001) = ceil(0.5) = 1; max(1, 1) = 1
-        result = evaluate_expression(
-            "max(ceil(input_tokens * 0.001), 1)", {"input_tokens": 500}
-        )
+        result = evaluate_expression("max(ceil(input_tokens * 0.001), 1)", {"input_tokens": 500})
         assert _q(result) == Decimal("1.0000")
 
     def test_clamp_of_round(self) -> None:
         # round(1000 * 0.0025) = round(2.5) = 3 (ROUND_HALF_UP); clamp(3, 0, 5) = 3
-        result = evaluate_expression(
-            "clamp(round(input_tokens * 0.0025), 0, 5)", {"input_tokens": 1000}
-        )
+        result = evaluate_expression("clamp(round(input_tokens * 0.0025), 0, 5)", {"input_tokens": 1000})
         assert _q(result) == Decimal("3.0000")
 
     def test_if_with_nested_ceil_and_floor(self) -> None:
@@ -635,9 +631,7 @@ class TestDecimalQuantizationBoundary:
 _PRICING_CASES_FOR_EXPR = _PARITY["pricing_cases"]
 
 
-@pytest.mark.parametrize(
-    "case", _PRICING_CASES_FOR_EXPR, ids=[c["name"] for c in _PRICING_CASES_FOR_EXPR]
-)
+@pytest.mark.parametrize("case", _PRICING_CASES_FOR_EXPR, ids=[c["name"] for c in _PRICING_CASES_FOR_EXPR])
 def test_parity_pricing_cases_via_engine(case: dict) -> None:
     """E11 — every pricing_cases entry in the parity fixture passes through
     PricingEngine.from_dict() and produces the expected total (byte-identical string)."""
@@ -666,16 +660,12 @@ class TestConcurrentEvalIsolation:
         def worker(tid: int) -> None:
             try:
                 # Each thread uses a distinct multiplier to detect cross-thread bleed.
-                result = evaluate_expression(
-                    "input_tokens * 0.001", {"input_tokens": tid * 100}
-                )
+                result = evaluate_expression("input_tokens * 0.001", {"input_tokens": tid * 100})
                 results[tid] = _q(result)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append((tid, exc))
 
-        threads = [
-            threading.Thread(target=worker, args=(i,)) for i in range(1, NUM_THREADS + 1)
-        ]
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(1, NUM_THREADS + 1)]
         for t in threads:
             t.start()
         for t in threads:
@@ -684,6 +674,4 @@ class TestConcurrentEvalIsolation:
         assert not errors, f"threads raised errors: {errors}"
         for tid in range(1, NUM_THREADS + 1):
             expected = _q(Decimal(tid * 100) * Decimal("0.001"))
-            assert results[tid] == expected, (
-                f"thread {tid}: got {results[tid]}, expected {expected}"
-            )
+            assert results[tid] == expected, f"thread {tid}: got {results[tid]}, expected {expected}"
