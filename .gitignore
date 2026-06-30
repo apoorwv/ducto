@@ -16,3 +16,4 @@ python/build/
 htmlcov/
 .testmondata
 .claude/
+.serena/

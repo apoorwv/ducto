@@ -106,10 +106,10 @@ describe.runIf(DATABASE_URL)("PostgresStore integration (real Postgres 16)", () 
     await pool.query(BOOTSTRAP_SQL);
     await applyMigrations(pool);
     // credit_team_members.user_id FKs into auth.users — seed the test users.
-    await pool.query(
-      `INSERT INTO auth.users (id) VALUES ($1), ($2) ON CONFLICT DO NOTHING`,
-      [PG_USER, PG_USER2],
-    );
+    await pool.query(`INSERT INTO auth.users (id) VALUES ($1), ($2) ON CONFLICT DO NOTHING`, [
+      PG_USER,
+      PG_USER2,
+    ]);
   }, 60000);
 
   afterEach(async () => {
@@ -386,8 +386,14 @@ describe.runIf(DATABASE_URL)("PostgresStore integration (real Postgres 16)", () 
   it("listUserTransactions returns all rows with NUMERIC parsed as Decimal", async () => {
     const store = new PostgresStore(DATABASE_URL!, pg.Pool);
     await store.addCredits(PG_USER, D(1000), "purchase");
-    await store.deductWithAllowance(PG_USER, D("2.5"), { idempotencyKey: "list-1", model: "gpt-4" });
-    await store.deductWithAllowance(PG_USER, D("3.5"), { idempotencyKey: "list-2", model: "claude-3" });
+    await store.deductWithAllowance(PG_USER, D("2.5"), {
+      idempotencyKey: "list-1",
+      model: "gpt-4",
+    });
+    await store.deductWithAllowance(PG_USER, D("3.5"), {
+      idempotencyKey: "list-2",
+      model: "claude-3",
+    });
     await store.addCredits(PG_USER2, D(10), "purchase");
 
     const result = await store.listUserTransactions(PG_USER);
@@ -405,10 +411,16 @@ describe.runIf(DATABASE_URL)("PostgresStore integration (real Postgres 16)", () 
     await store.addCredits(PG_USER, D(500), "purchase");
     await store.addCredits(PG_USER2, D(500), "purchase");
     await store.deductWithAllowance(PG_USER, D("2.5"), { idempotencyKey: "sbu-1", model: "gpt-4" });
-    await store.deductWithAllowance(PG_USER2, D("3.5"), { idempotencyKey: "sbu-2", model: "gpt-4" });
+    await store.deductWithAllowance(PG_USER2, D("3.5"), {
+      idempotencyKey: "sbu-2",
+      model: "gpt-4",
+    });
 
     const now = new Date();
-    const rows = await store.spendByUser(new Date(now.getTime() - 60000), new Date(now.getTime() + 60000));
+    const rows = await store.spendByUser(
+      new Date(now.getTime() - 60000),
+      new Date(now.getTime() + 60000),
+    );
     const u1 = rows.find((r) => r.userId === PG_USER);
     const u2 = rows.find((r) => r.userId === PG_USER2);
     expect(u1!.totalSpend.toString()).toBe("2.5");
@@ -420,7 +432,10 @@ describe.runIf(DATABASE_URL)("PostgresStore integration (real Postgres 16)", () 
     const store = new PostgresStore(DATABASE_URL!, pg.Pool);
     await store.addCredits(PG_USER, D(500), "purchase");
     await store.deductWithAllowance(PG_USER, D("1.5"), { idempotencyKey: "sbm-1", model: "gpt-4" });
-    await store.deductWithAllowance(PG_USER, D("2.5"), { idempotencyKey: "sbm-2", model: "claude-3" });
+    await store.deductWithAllowance(PG_USER, D("2.5"), {
+      idempotencyKey: "sbm-2",
+      model: "claude-3",
+    });
 
     const now = new Date();
     const rows = await store.spendByModel(
@@ -439,10 +454,7 @@ describe.runIf(DATABASE_URL)("PostgresStore integration (real Postgres 16)", () 
   it("JI2 — topUsers returns limit=2 ordered by descending spend", async () => {
     // Need 3 users — seed PG_USER3 into auth.users first
     const PG_USER3 = "00000000-0000-0000-0000-000000000003";
-    await pool.query(
-      `INSERT INTO auth.users (id) VALUES ($1) ON CONFLICT DO NOTHING`,
-      [PG_USER3],
-    );
+    await pool.query(`INSERT INTO auth.users (id) VALUES ($1) ON CONFLICT DO NOTHING`, [PG_USER3]);
     const store = new PostgresStore(DATABASE_URL!, pg.Pool);
     await store.addCredits(PG_USER, D(500), "purchase");
     await store.addCredits(PG_USER2, D(500), "purchase");
@@ -701,13 +713,19 @@ describe.runIf(DATABASE_URL)("PostgresStore integration (real Postgres 16)", () 
   // ── H10: MemoryStore vs PostgresStore parity ────────────────────────
   it("H10 — MemoryStore and PostgresStore produce identical results for same operations", async () => {
     const USER_H10 = "00000000-0000-0000-0000-000000000010";
-    // Ensure this user has no leftover balance from prior runs (defensive cleanup).
-    await pool.query(`DELETE FROM public.credit_transactions WHERE user_id = $1`, [USER_H10]);
-    await pool.query(`DELETE FROM public.user_credits WHERE user_id = $1`, [USER_H10]);
-    await pool.query(
-      `INSERT INTO auth.users (id) VALUES ($1) ON CONFLICT DO NOTHING`,
-      [USER_H10],
-    );
+    // Full database cleanup before test to guarantee no leftover state from prior
+    // tests (belt-and-suspenders — afterEach should already handle this, but CI
+    // parallelism across workers can create races on shared Postgres access).
+    await pool.query("DELETE FROM public.credit_reservations");
+    await pool.query("DELETE FROM public.credit_team_members");
+    await pool.query("DELETE FROM public.credit_teams");
+    await pool.query("DELETE FROM public.credit_usage_window");
+    await pool.query("DELETE FROM public.credit_transactions");
+    await pool.query("DELETE FROM public.credit_spend_caps");
+    await pool.query("UPDATE public.user_credits SET plan_id = NULL");
+    await pool.query("DELETE FROM public.user_credits");
+    await pool.query("DELETE FROM public.credit_plans");
+    await pool.query(`INSERT INTO auth.users (id) VALUES ($1) ON CONFLICT DO NOTHING`, [USER_H10]);
 
     const pgStore = new PostgresStore(DATABASE_URL!, pg.Pool);
     const memStore = new MemoryStore();

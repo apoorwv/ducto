@@ -466,9 +466,7 @@ class TestRetryBackoff:
         _run("pricing", "activate", "1")
         assert calls["n"] >= 2  # at least one retry before success
 
-    def test_non_transient_error_not_retried(
-        self, mem_store: MemoryStore, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_non_transient_error_not_retried(self, mem_store: MemoryStore, monkeypatch: pytest.MonkeyPatch) -> None:
         """'invalid config' is NOT a transient marker → exactly 1 attempt."""
         calls = {"n": 0}
 
@@ -519,8 +517,8 @@ class TestValidateThenUseEngine:
         assert "valid" in out.lower()
 
         # Step 2: Load the same config into a PricingEngine and calculate a cost.
-        from ducto.engine import PricingEngine
         from ducto import UsageMetrics
+        from ducto.engine import PricingEngine
 
         engine = PricingEngine.from_dict(config_data)
         result = engine.calculate(UsageMetrics(input_tokens=10, output_tokens=5))
@@ -562,9 +560,7 @@ class TestMigrateInvalidUrlFailsGracefully:
         assert code != 0, f"Expected non-zero exit, got {code}"
 
         # The output must NOT contain a raw Python traceback.
-        assert "Traceback (most recent call last)" not in combined, (
-            "Unexpected traceback in output:\n" + combined
-        )
+        assert "Traceback (most recent call last)" not in combined, "Unexpected traceback in output:\n" + combined
 
         # There must be some human-readable message (not silence).
         assert combined.strip() != "", "Expected a non-empty error message"

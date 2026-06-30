@@ -296,9 +296,7 @@ class TestSearchSectionAbsent:
 
     def test_no_search_section_returns_zero(self) -> None:
         engine = PricingEngine.from_dict(MINIMAL_PRICING)
-        result = engine.calculate(
-            UsageMetrics(model="_default", search_queries=10, search_results=5)
-        )
+        result = engine.calculate(UsageMetrics(model="_default", search_queries=10, search_results=5))
         assert result.search_credits == Decimal("0.0000")
 
 
@@ -310,9 +308,7 @@ class TestCacheSectionAbsent:
 
     def test_no_cache_section_returns_zero(self) -> None:
         engine = PricingEngine.from_dict(MINIMAL_PRICING)
-        result = engine.calculate(
-            UsageMetrics(model="_default", cache_read_tokens=5000)
-        )
+        result = engine.calculate(UsageMetrics(model="_default", cache_read_tokens=5000))
         assert result.cache_savings == Decimal("0.0000")
 
 
@@ -379,9 +375,7 @@ class TestQuantizationSummedComponents:
         # input_tokens * (1/3) — but (1/3) is exact division in Decimal,
         # producing a long repeating decimal. Quantized to 4dp.
         # 1 * Decimal(1) / Decimal(3) = 0.3333... -> quantized = 0.3333
-        engine = PricingEngine.from_dict(
-            {"models": {"_default": "input_tokens * 1 / output_tokens"}}
-        )
+        engine = PricingEngine.from_dict({"models": {"_default": "input_tokens * 1 / output_tokens"}})
         # input_tokens=1, output_tokens=3 -> 1/3 -> 0.3333...
         result = engine.calculate(UsageMetrics(model="_default", input_tokens=1, output_tokens=3))
         assert result.total == Decimal("0.3333")
@@ -403,9 +397,7 @@ class TestTotalClampedAtZero:
         # model cost: 10 * 0.001 = 0.01
         # cache discount: -1000 * 0.01 = -10.0
         # raw_total = 0.01 - 10.0 = -9.99 -> clamped to 0
-        result = engine.calculate(
-            UsageMetrics(model="_default", input_tokens=10, cache_read_tokens=1000)
-        )
+        result = engine.calculate(UsageMetrics(model="_default", input_tokens=10, cache_read_tokens=1000))
         assert result.total == Decimal("0.0000")
         assert result.cache_savings == Decimal("-10.0000")
         assert result.model_credits == Decimal("0.0100")
@@ -490,10 +482,8 @@ class TestCalculateBatchOrdering:
         batch = engine.calculate_batch([m1, m2, m3])
 
         assert len(batch) == 3
-        for i, (ind, bat) in enumerate(zip(individual, batch)):
-            assert bat.total == ind.total, (
-                f"index {i}: batch={bat.total}, individual={ind.total}"
-            )
+        for i, (ind, bat) in enumerate(zip(individual, batch, strict=True)):
+            assert bat.total == ind.total, f"index {i}: batch={bat.total}, individual={ind.total}"
 
     def test_batch_order_with_varied_models(self) -> None:
         # Use a config where each model produces a clearly distinct total.
@@ -531,12 +521,8 @@ class TestCacheDiscountClampedAtZero:
             "cache": {"discount": "-cache_read_tokens * 0.01"},
         }
         engine = PricingEngine.from_dict(config)
-        result = engine.calculate(
-            UsageMetrics(model="_default", input_tokens=10, cache_read_tokens=5000)
-        )
-        assert result.total == Decimal("0.0000"), (
-            f"total should be clamped to 0, got {result.total}"
-        )
+        result = engine.calculate(UsageMetrics(model="_default", input_tokens=10, cache_read_tokens=5000))
+        assert result.total == Decimal("0.0000"), f"total should be clamped to 0, got {result.total}"
         # Component breakdown values are preserved (not clamped).
         assert result.cache_savings == Decimal("-50.0000")
         assert result.model_credits == Decimal("0.0100")
@@ -548,7 +534,5 @@ class TestCacheDiscountClampedAtZero:
             "cache": {"discount": "-cache_read_tokens * 1000"},
         }
         engine = PricingEngine.from_dict(config)
-        result = engine.calculate(
-            UsageMetrics(model="_default", input_tokens=1, cache_read_tokens=999999)
-        )
+        result = engine.calculate(UsageMetrics(model="_default", input_tokens=1, cache_read_tokens=999999))
         assert result.total == Decimal("0.0000")

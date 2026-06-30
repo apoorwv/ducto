@@ -261,7 +261,8 @@ describe("ttl / renewal", () => {
     await store.addCredits("u1", D(100));
     const lease = await m.reserve("u1", D(20), { ttl: 1 });
     // Almost-expired → renew pushes it out, then settle succeeds.
-    expireLease(store, lease.leaseId, new Date(Date.now() + 1));
+    // Use a generous margin (60s) so a fast CI runner doesn't race past 1ms (Node 22).
+    expireLease(store, lease.leaseId, new Date(Date.now() + 60000));
     const renewed = await m.renew("u1", lease.leaseId, 600);
     expect(renewed.error == null).toBe(true);
     const ded = await m.settle("u1", lease.leaseId, D(20));
