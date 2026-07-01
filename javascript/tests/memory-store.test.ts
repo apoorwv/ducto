@@ -84,7 +84,7 @@ describe("MemoryStore", () => {
     async function seedPlan(freeAllowance: number, userId = "user-1") {
       const config: PricingConfigData = {
         models: { _default: "1" },
-        plans: { p: { id: "plan-1", name: "Plan", freeAllowance: D(freeAllowance) } },
+        plans: { "plan-1": { id: "plan-1", name: "Plan", freeAllowance: D(freeAllowance) } },
       };
       await store.setActivePricing(config);
       await store.setUserPlan(userId, "plan-1");
@@ -275,7 +275,7 @@ describe("MemoryStore", () => {
       const config: PricingConfigData = {
         models: { _default: "1" },
         plans: {
-          free: { id: "plan-free", name: "Free Plan", freeAllowance: D(100) },
+          "plan-free": { id: "plan-free", name: "Free Plan", freeAllowance: D(100) },
         },
       };
       await store.setActivePricing(config);
@@ -363,7 +363,7 @@ describe("MemoryStore", () => {
       const config: PricingConfigData = {
         models: { _default: "1" },
         plans: {
-          pro: { id: "plan-pro", name: "Pro Plan", freeAllowance: D(500) },
+          "plan-pro": { id: "plan-pro", name: "Pro Plan", freeAllowance: D(500) },
         },
       };
       await store.setActivePricing(config);
@@ -385,7 +385,7 @@ describe("MemoryStore", () => {
       const config: PricingConfigData = {
         models: { _default: "1" },
         plans: {
-          basic: { id: "plan-basic", name: "Basic", freeAllowance: D(200) },
+          "plan-basic": { id: "plan-basic", name: "Basic", freeAllowance: D(200) },
         },
       };
       await store.setActivePricing(config);
@@ -898,7 +898,7 @@ describe("MemoryStore", () => {
       // Plan covers first 5 credits free; charge 10 → net = 5 which is > cap limit 3
       const config: PricingConfigData = {
         models: { _default: "1" },
-        plans: { p: { id: "plan-ms2", name: "Plan MS2", freeAllowance: D(5) } },
+        plans: { "plan-ms2": { id: "plan-ms2", name: "Plan MS2", freeAllowance: D(5) } },
       };
       await store.setActivePricing(config);
       await store.setUserPlan("user-1", "plan-ms2");
@@ -923,7 +923,7 @@ describe("MemoryStore", () => {
       // The transaction has amount = -20 (the net debit), so it is refundable.
       const config: PricingConfigData = {
         models: { _default: "1" },
-        plans: { p: { id: "plan-ms3", name: "Plan MS3", freeAllowance: D(30) } },
+        plans: { "plan-ms3": { id: "plan-ms3", name: "Plan MS3", freeAllowance: D(30) } },
       };
       await store.setActivePricing(config);
       await store.setUserPlan("user-1", "plan-ms3");
@@ -1091,7 +1091,7 @@ describe("MemoryStore", () => {
     it("incrementUsageWindow reduces available allowance", async () => {
       const config: PricingConfigData = {
         models: { _default: "1" },
-        plans: { p: { id: "plan-h8", name: "Plan H8", freeAllowance: D(10) } },
+        plans: { "plan-h8": { id: "plan-h8", name: "Plan H8", freeAllowance: D(10) } },
       };
       await store.setActivePricing(config);
       await store.setUserPlan("user-1", "plan-h8");
@@ -1180,7 +1180,7 @@ describe("MemoryStore", () => {
 
       const config: PricingConfigData = {
         models: { _default: "1" },
-        plans: { p: { id: "plan-m1", name: "Plan M1", freeAllowance: D(5) } },
+        plans: { "plan-m1": { id: "plan-m1", name: "Plan M1", freeAllowance: D(5) } },
       };
       await store.setActivePricing(config);
       await store.setUserPlan("user-1", "plan-m1");
@@ -1297,7 +1297,7 @@ describe("MemoryStore", () => {
     it("refund of a deduction fully covered by allowance returns over_refund (net charge was zero)", async () => {
       const config: PricingConfigData = {
         models: { _default: "1" },
-        plans: { p: { id: "plan-m8", name: "Plan M8", freeAllowance: D(100) } },
+        plans: { "plan-m8": { id: "plan-m8", name: "Plan M8", freeAllowance: D(100) } },
       };
       await store.setActivePricing(config);
       await store.setUserPlan("user-1", "plan-m8");
@@ -1354,7 +1354,7 @@ describe("MemoryStore", () => {
       const config: PricingConfigData = {
         models: { _default: "1" },
         plans: {
-          p: {
+          "plan-ms9": {
             id: "plan-ms9",
             name: "Plan MS9",
             freeAllowance: D(0),

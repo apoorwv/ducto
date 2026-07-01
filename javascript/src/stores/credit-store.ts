@@ -20,6 +20,7 @@ import type {
   ListUsageEventsOptions,
   PaginatedTransactions,
   PricingConfigData,
+  PricingConfigHistoryItem,
   PricingConfigResult,
   RefundResult,
   ReleaseResult,
@@ -143,6 +144,11 @@ export interface CreditStore {
 
   getActivePricing(): Promise<PricingConfigResult | null>;
   setActivePricing(config: PricingConfigData, label?: string | null): Promise<string>;
+
+  // H8: pricing history / activation — parity with Python base.py:293-312.
+  getPricingHistory(): Promise<PricingConfigHistoryItem[]>;
+  getPricingConfig(version: number): Promise<PricingConfigResult | null>;
+  activatePricing(version: number): Promise<string>;
 
   // ── Plan management ────────────────────────────────────────────────
   getUserPlan(userId: string): Promise<GetUserPlanResult>;

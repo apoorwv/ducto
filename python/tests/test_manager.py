@@ -1504,12 +1504,11 @@ class TestFloorBreachEvent:
         mgr.publish_pricing_from_dict({"models": {"_default": "input_tokens * 1"}, "min_balance": min_balance})
         return mgr, store
 
-    def test_floor_breach_emitted_after_settle_brings_balance_into_gap(self) -> None:
-        """reserve(hold=2) + settle(actual=5): balance 7 → 2; 0 <= 2 < 5 → fires.
+    def test_settle_clamps_actual_to_floor_no_breach(self) -> None:
+        """C1 fix: settle is floor-clamped so balance cannot slip below min_balance.
 
-        Admission holds 2 (7 - 2 = 5, exactly at floor → admitted).
-        Settle is de-clamped — bills actual cost 5 even though balance_after (2)
-        slips below min_balance (5). floor_breach signals the operator.
+        reserve(hold=2) + settle(actual=5): balance 7, floor 5 => max debit 2 =>
+        balance_after=5 (clamped, no floor_breach emitted).
         """
         emitter = CreditEventEmitter()
         events: list[CreditEvent] = []
@@ -1517,17 +1516,13 @@ class TestFloorBreachEvent:
         mgr, store = self._make_mgr(emitter)
         store.add_credits("u1", Decimal(7))
 
-        # Reserve the exact worst-case that barely passes admission (7 - 2 = 5 == floor).
         lease = mgr.reserve("u1", Decimal(2))
-        # Settle with actual cost 5 — de-clamped settle bills in full even though
-        # balance_after (2) slips below min_balance (5).
+        # C1 fix: settle clamps net to max_debit = max(0, 7 - 5) = 2.
         ded = mgr.settle("u1", lease.lease_id, Decimal(5))
-        assert ded.balance_after == Decimal(2)
+        assert ded.balance_after == Decimal(5)
 
-        assert len(events) == 1
-        assert events[0].data is not None
-        assert events[0].data["balance"] == Decimal(2)
-        assert events[0].data["min_balance"] == Decimal(5)
+        # floor_breach is not fired: balance stays AT the floor (>= min_balance).
+        assert len(events) == 0
 
     def test_floor_breach_not_emitted_when_balance_stays_above_min(self) -> None:
         emitter = CreditEventEmitter()

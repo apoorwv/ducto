@@ -153,13 +153,14 @@ function tokenize(src: string): Token[] {
       continue;
     }
 
-    // Numbers — strict literal: digits with at most one '.'.
-    // Reject malformed literals like "1.2.3" (H11 parity fix); Python's
-    // ast.parse rejects these, so JS must too rather than silently
-    // truncating via parseFloat.
+    // Numbers — strict literal: digits with optional '.' and optional 'e'/'E' exponent.
+    // Supports scientific notation (1e3, 1e-6, 2.5E+10) so per-token pricing
+    // configs like {"_default":"input_tokens * 1e-6"} load in JS (H5 parity fix).
+    // Rejects malformed literals like "1.2.3" (H11 parity fix).
     if (/[0-9.]/.test(src[i])) {
       let num = "";
       let dotSeen = false;
+      // Mantissa: digits and at most one '.'
       while (i < src.length && /[0-9.]/.test(src[i])) {
         if (src[i] === ".") {
           if (dotSeen) {
@@ -172,6 +173,22 @@ function tokenize(src: string): Token[] {
       }
       if (num === "." || !/^[0-9]*\.?[0-9]*$/.test(num) || !/[0-9]/.test(num)) {
         throw new ExpressionError(`invalid number literal: '${num}'`);
+      }
+      // Optional exponent: e/E followed by optional +/- and one or more digits.
+      if (i < src.length && (src[i] === "e" || src[i] === "E")) {
+        num += src[i];
+        i++;
+        if (i < src.length && (src[i] === "+" || src[i] === "-")) {
+          num += src[i];
+          i++;
+        }
+        if (i >= src.length || !/[0-9]/.test(src[i])) {
+          throw new ExpressionError(`invalid number literal: '${num}'`);
+        }
+        while (i < src.length && /[0-9]/.test(src[i])) {
+          num += src[i];
+          i++;
+        }
       }
       tokens.push({ type: "number", value: num });
       continue;
@@ -787,12 +804,16 @@ function evaluateNode(node: Node, vars: Record<string, number | Decimal>): Decim
 
     case "boolean": {
       const l = evaluateNode(node.left, vars);
-      const r = evaluateNode(node.right, vars);
       switch (node.op) {
         case "and":
-          return truthy(l) && truthy(r) ? ONE : ZERO;
+          // H4 fix: return operand (Python short-circuit semantics), not 0/1.
+          // (5 and 7) → 7; (0 and 7) → 0; (5 and 0) → 0.
+          if (!truthy(l)) return l;
+          return evaluateNode(node.right, vars);
         case "or":
-          return truthy(l) || truthy(r) ? ONE : ZERO;
+          // (5 or 7) → 5; (0 or 7) → 7; (0 or 0) → 0.
+          if (truthy(l)) return l;
+          return evaluateNode(node.right, vars);
         default:
           throw new ExpressionError(`unknown boolean op: ${node.op}`);
       }

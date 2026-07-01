@@ -22,6 +22,7 @@ import type {
   OperationPolicy,
   PaginatedTransactions,
   PricingConfigData,
+  PricingConfigHistoryItem,
   PricingConfigResult,
   RefundResult,
   ReleaseResult,
@@ -430,6 +431,40 @@ export class HttpxSupabaseStore implements CreditStore {
     });
     const code = this.errorCode(row);
     if (code) throw new StoreError(`set_active_pricing_config: ${code}`);
+    return String(row.id ?? "");
+  }
+
+  // H8: pricing history / activation — mirrors Python base.py:293-312.
+
+  async getPricingHistory(): Promise<PricingConfigHistoryItem[]> {
+    const rows = await this.rpc("get_pricing_history", {});
+    if (!rows) return [];
+    const arr = Array.isArray(rows) ? rows : [rows];
+    return (arr as Record<string, unknown>[]).map((r) => ({
+      id: String(r.id ?? ""),
+      version: Number(r.version ?? 0),
+      label: (r.label as string) ?? null,
+      active: Boolean(r.active ?? false),
+      createdAt: String(r.created_at ?? ""),
+    }));
+  }
+
+  async getPricingConfig(version: number): Promise<PricingConfigResult | null> {
+    const row = await this.rpc("get_pricing_config", { p_version: version });
+    if (!row || Object.keys(row).length === 0) return null;
+    const code = this.errorCode(row);
+    if (code) throw new StoreError(`get_pricing_config: ${code}`);
+    return {
+      id: String(row.id ?? ""),
+      config: row.config as PricingConfigData,
+      version: Number(row.version ?? version),
+    };
+  }
+
+  async activatePricing(version: number): Promise<string> {
+    const row = await this.rpc("activate_pricing", { p_version: version });
+    const code = this.errorCode(row);
+    if (code) throw new StoreError(`activate_pricing: ${code}`);
     return String(row.id ?? "");
   }
 

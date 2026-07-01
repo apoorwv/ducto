@@ -22,6 +22,7 @@ import type {
   OperationPolicy,
   PaginatedTransactions,
   PricingConfigData,
+  PricingConfigHistoryItem,
   PricingConfigResult,
   RefundResult,
   ReleaseResult,
@@ -451,6 +452,38 @@ export class PostgresStore implements CreditStore {
       JSON.stringify(config),
       label ?? null,
     ]);
+    const row = (rows?.[0] ?? {}) as Record<string, unknown>;
+    return String(row.id ?? "");
+  }
+
+  // H8: pricing history / activation — mirrors Python base.py:293-312.
+
+  async getPricingHistory(): Promise<PricingConfigHistoryItem[]> {
+    const rows = await this.callproc("get_pricing_history", []);
+    if (!rows) return [];
+    return (rows as Record<string, unknown>[]).map((r) => ({
+      id: String(r.id ?? ""),
+      version: Number(r.version ?? 0),
+      label: (r.label as string) ?? null,
+      active: Boolean(r.active ?? false),
+      createdAt: String(r.created_at ?? ""),
+    }));
+  }
+
+  async getPricingConfig(version: number): Promise<PricingConfigResult | null> {
+    const rows = await this.callproc("get_pricing_config", [version]);
+    if (!rows || rows.length === 0) return null;
+    const row = rows[0] as Record<string, unknown>;
+    if (!row.config) return null;
+    return {
+      id: String(row.id ?? ""),
+      config: row.config as PricingConfigData,
+      version: Number(row.version ?? version),
+    };
+  }
+
+  async activatePricing(version: number): Promise<string> {
+    const rows = await this.callproc("activate_pricing", [version]);
     const row = (rows?.[0] ?? {}) as Record<string, unknown>;
     return String(row.id ?? "");
   }

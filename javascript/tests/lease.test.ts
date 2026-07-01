@@ -197,8 +197,9 @@ describe("overdraft", () => {
     store = new MemoryStore();
   });
 
-  it("settle bills the full actual even past the floor", async () => {
-    // planless user → constructor preset (overdraft, floor -50).
+  it("settle clamps to overdraft floor (C1 fix)", async () => {
+    // C1 fix: settle clamps the charge so balance >= overdraft_floor (-50).
+    // balance=0, actual=60, floor=-50 → max debit=50, balance_after=-50.
     const m = new CreditManager(store, undefined, undefined, {
       policy: "overdraft",
       overdraftFloor: D(-50),
@@ -207,16 +208,15 @@ describe("overdraft", () => {
     await store.addCredits("u1", D(0)); // ensure a balance row at 0
 
     const lease = await m.reserve("u1", D(10)); // small estimate
-    // De-clamped: actual 60 > lease 10 and pushes balance below the -50 floor.
     const ded = await m.settle("u1", lease.leaseId, D(60));
-    expect(ded.balanceAfter.eq(D(-60))).toBe(true);
+    expect(ded.balanceAfter.eq(D(-50))).toBe(true);
 
     // A NEW admission is now rejected (available ≤ floor).
     await expect(m.reserve("u1", D(1))).rejects.toThrow(InsufficientCreditsError);
 
     // addCredits reconciles the negative balance.
     const res = await m.addCredits("u1", D(200));
-    expect(res.newBalance.eq(D(140))).toBe(true);
+    expect(res.newBalance.eq(D(150))).toBe(true);
   });
 
   it("overdraft event is emitted when the balance goes negative", async () => {

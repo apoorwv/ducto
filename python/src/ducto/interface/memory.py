@@ -560,6 +560,19 @@ class MemoryStore(CreditStore):
                 consume = min(self._allowance_remaining(user_id, plan_key), amount)
             net = amount - consume
 
+            # Floor enforcement (C1): clamp net so balance stays ≥ floor.
+            # The floor is derived from the lease's persisted billing_mode and
+            # overdraft_floor; min_balance is the engine's strict-mode floor
+            # threaded through from the manager.
+            if lease.billing_mode in ("strict", "strict_prepaid"):
+                settle_floor = min_balance
+            else:
+                settle_floor = lease.overdraft_floor if lease.overdraft_floor is not None else Decimal(0)
+            max_debit = max(Decimal(0), balance - settle_floor)
+            net = min(net, max_debit)
+            # Re-clamp consume so it never exceeds the actual net charge.
+            consume = min(consume, amount - net) if net < amount else consume
+
             # Spend cap is ADVISORY at settle (work is done): record the strongest
             # breaching action, never block (interface plan §7). 'deny' surfaces as
             # a non-blocking signal the manager re-emits as credits.cap_reached.

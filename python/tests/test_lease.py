@@ -153,16 +153,17 @@ class TestFeatureGate:
 
 
 class TestOverdraft:
-    def test_settle_bills_full_actual_even_past_floor(self, store: MemoryStore) -> None:
+    def test_settle_clamps_to_overdraft_floor(self, store: MemoryStore) -> None:
         # planless user → constructor preset (overdraft, floor -50).
         m = CreditManager(store=store, policy="overdraft", overdraft_floor=Decimal(-50))
         m.publish_pricing_from_dict({"models": {"_default": "input_tokens * 1"}, "min_balance": 0})
         store.add_credits("u1", Decimal(0))  # ensure a balance row at 0
 
         lease = m.reserve("u1", Decimal(10))  # small estimate
-        # De-clamped: actual 60 > lease 10 and pushes balance below the -50 floor.
+        # C1 fix: settle clamps the charge so balance stays ≥ overdraft_floor (-50).
+        # actual=60 would take balance to -60; floor is -50, so max debit is 50.
         ded = m.settle("u1", lease.lease_id, Decimal(60))
-        assert ded.balance_after == Decimal(-60)
+        assert ded.balance_after == Decimal(-50)
 
         # A NEW admission is now rejected (available ≤ floor).
         with pytest.raises(InsufficientCreditsError):
@@ -170,7 +171,7 @@ class TestOverdraft:
 
         # add_credits reconciles the negative balance.
         res = m.add_credits("u1", Decimal(200))
-        assert res.new_balance == Decimal(140)
+        assert res.new_balance == Decimal(150)
 
     def test_overdraft_event_emitted_when_balance_negative(self, store: MemoryStore) -> None:
         emitter = CreditEventEmitter()
@@ -184,6 +185,39 @@ class TestOverdraft:
         m.settle("u1", lease.lease_id, Decimal(30))
         assert len(events) == 1
         assert events[0].data["balance"] == Decimal(-30)
+
+    def test_settle_within_overdraft_floor_is_unclamped(self, store: MemoryStore) -> None:
+        # Actual cost ≤ balance - floor: charge goes through unchanged.
+        m = CreditManager(store=store, policy="overdraft", overdraft_floor=Decimal(-50))
+        m.publish_pricing_from_dict({"models": {"_default": "input_tokens * 1"}, "min_balance": 0})
+        store.add_credits("u1", Decimal(0))
+
+        lease = m.reserve("u1", Decimal(10))
+        ded = m.settle("u1", lease.lease_id, Decimal(40))
+        assert ded.balance_after == Decimal(-40)
+
+
+class TestStrictPrepaidFloor:
+    def test_settle_clamps_to_min_balance(self, store: MemoryStore) -> None:
+        # C1: strict_prepaid zero-debt guarantee enforced at settle time.
+        # balance=20, min_balance=5, actual=80 → max debit = 15, balance_after = 5.
+        m = CreditManager(store=store, policy="strict_prepaid")
+        m.publish_pricing_from_dict({"models": {"_default": "input_tokens * 1"}, "min_balance": 5})
+        store.add_credits("u1", Decimal(20))
+
+        lease = m.reserve("u1", Decimal(10))
+        ded = m.settle("u1", lease.lease_id, Decimal(80))
+        assert ded.balance_after >= Decimal(5)
+
+    def test_settle_exact_min_balance(self, store: MemoryStore) -> None:
+        # Actual cost exactly depletes to the floor: no over-clamp.
+        m = CreditManager(store=store, policy="strict_prepaid")
+        m.publish_pricing_from_dict({"models": {"_default": "input_tokens * 1"}, "min_balance": 5})
+        store.add_credits("u1", Decimal(20))
+
+        lease = m.reserve("u1", Decimal(10))
+        ded = m.settle("u1", lease.lease_id, Decimal(15))
+        assert ded.balance_after == Decimal(5)
 
 
 # ── 5. TTL / renewal ───────────────────────────────────────────────────────

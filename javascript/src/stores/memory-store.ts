@@ -24,6 +24,7 @@ import type {
   PaginatedTransactions,
   PlanDefinition,
   PricingConfigData,
+  PricingConfigHistoryItem,
   PricingConfigResult,
   RefundResult,
   ReleaseResult,
@@ -47,6 +48,34 @@ function featurePresent(value: unknown): boolean {
   // Identity form: numeric 0 / "" count as present. Matches Python
   // `value is not None and value is not False`. Do NOT use Boolean(value).
   return value !== null && value !== undefined && value !== false;
+}
+
+/**
+ * Normalise a raw plan object (possibly snake_case from a JSON fixture or raw dict)
+ * into a proper PlanDefinition with Decimal fields. Accepts both camelCase and
+ * snake_case keys so configs written in either style work without preprocessing.
+ */
+function normalisePlanDefinition(planKey: string, raw: unknown): PlanDefinition {
+  const p = raw as Record<string, unknown>;
+  const freeAllowanceRaw = (p["freeAllowance"] ?? p["free_allowance"]) as number | string | undefined;
+  const defaultBillingModeRaw = (p["defaultBillingMode"] ?? p["billingMode"] ?? p["default_billing_mode"] ?? p["billing_mode"]) as string | undefined;
+  const overdraftFloorRaw = (p["overdraftFloor"] ?? p["overdraft_floor"]) as number | string | null | undefined;
+  const rateOverridesRaw = (p["rateOverrides"] ?? p["rate_overrides"]) as Record<string, string> | null | undefined;
+  const perOperationRaw = (p["perOperation"] ?? p["per_operation"]) as Record<string, unknown> | null | undefined;
+  const maxConcurrentRaw = (p["maxConcurrent"] ?? p["max_concurrent"]) as number | null | undefined;
+
+  const billingMode = (defaultBillingModeRaw === "overdraft" ? "overdraft" : "strict") as "strict" | "overdraft";
+  return {
+    id: (p["id"] as string | undefined) ?? planKey,
+    name: (p["name"] as string | undefined) ?? planKey,
+    freeAllowance: freeAllowanceRaw != null ? new Decimal(freeAllowanceRaw) : ZERO,
+    rateOverrides: rateOverridesRaw ?? null,
+    features: (p["features"] as Record<string, unknown> | null | undefined) ?? null,
+    defaultBillingMode: billingMode,
+    overdraftFloor: overdraftFloorRaw != null ? new Decimal(overdraftFloorRaw) : null,
+    maxConcurrent: maxConcurrentRaw ?? null,
+    perOperation: (perOperationRaw as PlanDefinition["perOperation"]) ?? undefined,
+  };
 }
 
 interface TransactionRecord {
@@ -101,8 +130,16 @@ export class MemoryStore implements CreditStore {
   private lifetime = new Map<string, Decimal>();
   private transactions: TransactionRecord[] = [];
   private reservations = new Map<string, ReservationRecord>();
-  private pricingConfig: PricingConfigData | null = null;
   private pricingVersion = 0;
+  private pricingLabel: string | null = null;
+  private pricingHistory: Array<{
+    id: string;
+    version: number;
+    label: string | null;
+    active: boolean;
+    config: PricingConfigData;
+    createdAt: string;
+  }> = [];
   private planDefinitions = new Map<string, PlanDefinition>();
   private userPlanMap = new Map<string, string>();
   private usageWindows: Array<{
@@ -662,7 +699,22 @@ export class MemoryStore implements CreditStore {
       const remaining = Decimal.max(ZERO, planDef.freeAllowance.minus(used));
       consume = Decimal.min(remaining, amount);
     }
-    const net = amount.minus(consume);
+    // Floor enforcement (C1): clamp net so balance stays ≥ floor.
+    // The floor is derived from the lease's persisted billingMode and
+    // overdraftFloor; options.minBalance is the engine's strict-mode floor.
+    const settleFloor: Decimal =
+      activeLease.billingMode === "strict"
+        ? (options?.minBalance ?? ZERO)
+        : (activeLease.overdraftFloor ?? ZERO);
+    const maxDebit = Decimal.max(ZERO, balance.minus(settleFloor));
+    let net = amount.minus(consume);
+    if (net.gt(maxDebit)) {
+      net = maxDebit;
+      // Re-clamp consume so it never exceeds amount - net.
+      if (net.lt(amount)) {
+        consume = Decimal.min(consume, amount.minus(net));
+      }
+    }
 
     // Spend cap is ADVISORY at settle (work is done): record the strongest
     // breaching action, never block (interface plan §7). 'deny' surfaces as a
@@ -789,25 +841,71 @@ export class MemoryStore implements CreditStore {
   }
 
   async getActivePricing(): Promise<PricingConfigResult | null> {
-    if (!this.pricingConfig) return null;
-    return {
-      id: randomUUID(),
-      config: this.pricingConfig,
-      version: this.pricingVersion,
-    };
+    // LOW hygiene fix: return the stored record id (stable), not a fresh randomUUID()
+    // every call. A fresh id breaks any caching keyed on config id.
+    const active = [...this.pricingHistory].reverse().find((h) => h.active);
+    if (!active) return null;
+    return { id: active.id, config: active.config, version: active.version };
   }
 
-  async setActivePricing(config: PricingConfigData, _label?: string | null): Promise<string> {
-    this.pricingConfig = config;
+  async setActivePricing(config: PricingConfigData, label?: string | null): Promise<string> {
+    // Deactivate all previous versions, then insert a new active entry.
+    for (const h of this.pricingHistory) h.active = false;
     this.pricingVersion += 1;
-    // Extract plan definitions from v2 config
+    this.pricingLabel = label ?? null;
+    const id = randomUUID();
+    this.pricingHistory.push({
+      id,
+      version: this.pricingVersion,
+      label: this.pricingLabel,
+      active: true,
+      config,
+      createdAt: new Date().toISOString(),
+    });
+    // H1 fix: key planDefinitions by the config dict key (plan_key), not plan.id.
+    // Python MemoryStore and SQL both resolve setUserPlan("u1","pro") by looking up
+    // the dict key "pro"; JS must match or setUserPlan resolves to null/planless.
     if ("plans" in config && config.plans) {
-      for (const planData of Object.values(config.plans)) {
-        const plan = planData as PlanDefinition;
-        this.planDefinitions.set(plan.id, plan);
+      for (const [planKey, planData] of Object.entries(config.plans)) {
+        this.planDefinitions.set(planKey, normalisePlanDefinition(planKey, planData));
       }
     }
-    return randomUUID();
+    return id;
+  }
+
+  // H8: pricing history / activation — parity with Python base.py:293-312.
+
+  async getPricingHistory(): Promise<PricingConfigHistoryItem[]> {
+    return this.pricingHistory
+      .slice()
+      .reverse()
+      .map((h) => ({
+        id: h.id,
+        version: h.version,
+        label: h.label,
+        active: h.active,
+        createdAt: h.createdAt,
+      }));
+  }
+
+  async getPricingConfig(version: number): Promise<PricingConfigResult | null> {
+    const entry = this.pricingHistory.find((h) => h.version === version);
+    if (!entry) return null;
+    return { id: entry.id, config: entry.config, version: entry.version };
+  }
+
+  async activatePricing(version: number): Promise<string> {
+    const entry = this.pricingHistory.find((h) => h.version === version);
+    if (!entry) throw new Error(`pricing version ${version} not found`);
+    for (const h of this.pricingHistory) h.active = false;
+    entry.active = true;
+    this.pricingVersion = entry.version;
+    if ("plans" in entry.config && entry.config.plans) {
+      for (const [planKey, planData] of Object.entries(entry.config.plans)) {
+        this.planDefinitions.set(planKey, normalisePlanDefinition(planKey, planData));
+      }
+    }
+    return entry.id;
   }
 
   // ── Plan management ────────────────────────────────────────────────
@@ -1234,6 +1332,21 @@ export class MemoryStore implements CreditStore {
     return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   }
 
+  /** Monthly team spend for a specific member: sum of team_usage debits this UTC month (H3). */
+  private teamMonthSpent(teamId: string, userId: string): Decimal {
+    const now = this.now();
+    const windowStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    let total = ZERO;
+    for (const t of this.transactions) {
+      if (t.userId !== userId) continue;
+      if (t.type !== "team_usage") continue;
+      if (t.amount.gte(0)) continue;
+      if (t.metadata?.["teamId"] !== teamId) continue;
+      if (t.createdAt >= windowStart) total = total.plus(t.amount.abs());
+    }
+    return total;
+  }
+
   /** Sum spend (positive magnitude) in a window, optionally restricted to a model. */
   private spendInWindow(userId: string, windowStart: Date, capModel?: string | null): Decimal {
     let total = ZERO;
@@ -1410,16 +1523,20 @@ export class MemoryStore implements CreditStore {
       };
     }
 
-    // Enforce spend cap
-    if (member.spendCap != null && member.totalSpent.plus(amount).gt(member.spendCap)) {
-      return {
-        transactionId: "",
-        teamId,
-        userId,
-        amount: ZERO,
-        teamBalanceAfter: team.balance,
-        error: "spend_cap_exceeded",
-      };
+    // H3 fix: enforce spend cap against the monthly window, not lifetime totalSpent.
+    // Python MemoryStore and SQL both use a monthly window (first day of UTC month).
+    if (member.spendCap != null) {
+      const monthSpent = this.teamMonthSpent(teamId, userId);
+      if (monthSpent.plus(amount).gt(member.spendCap)) {
+        return {
+          transactionId: "",
+          teamId,
+          userId,
+          amount: ZERO,
+          teamBalanceAfter: team.balance,
+          error: "spend_cap_exceeded",
+        };
+      }
     }
 
     if (team.balance.lt(amount)) {

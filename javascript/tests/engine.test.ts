@@ -222,13 +222,22 @@ describe("PricingEngine", () => {
       expect(cost!.toFixed(4)).toBe("100.0000");
     });
 
-    it("returns a fractional fixed cost without truncation", () => {
-      // CHANGED: was coerced to int in Python / float in JS; now exact Decimal.
+    it("rejects fractional fixed cost (H7: must be non-negative integer)", () => {
+      // H7 fix: Python config.py uses NonNegativeInt; JS must match.
+      expect(() =>
+        PricingEngine.fromDict({
+          models: { _default: "input_tokens * 1" },
+          fixed: { tiny: 0.5 },
+        }),
+      ).toThrow("fixed.tiny must be a non-negative integer");
+    });
+
+    it("returns an integer fixed cost as exact Decimal", () => {
       const engine = PricingEngine.fromDict({
         models: { _default: "input_tokens * 1" },
-        fixed: { tiny: 0.5 },
+        fixed: { embed: 2 },
       });
-      expect(engine.getFixedCost("tiny")!.toFixed(4)).toBe("0.5000");
+      expect(engine.getFixedCost("embed")!.toFixed(4)).toBe("2.0000");
     });
 
     it("returns null for unknown job", () => {

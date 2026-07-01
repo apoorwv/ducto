@@ -14,7 +14,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 #: Billing mode for an operation. ``strict`` never lets the balance fall below
 #: the floor at admission (lease worst-case ⇒ zero debt); ``overdraft`` permits
@@ -236,6 +236,9 @@ class PlanDefinition(BaseModel):
     (interface plan §1): a ``default_billing_mode`` for the whole plan, optional
     ``per_operation`` overrides keyed by operation type, and plan-wide
     ``max_concurrent`` / ``overdraft_floor`` defaults.
+
+    Accepts ``billing_mode`` as a short-form alias for ``default_billing_mode``
+    so configs written with the shorter key work without changes.
     """
 
     id: str
@@ -247,6 +250,15 @@ class PlanDefinition(BaseModel):
     per_operation: dict[str, OperationPolicy] | None = None
     max_concurrent: int | None = None
     overdraft_floor: Decimal | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalise_billing_mode_alias(cls, data: Any) -> Any:
+        """Accept ``billing_mode`` as an alias for ``default_billing_mode``."""
+        if isinstance(data, dict) and "billing_mode" in data and "default_billing_mode" not in data:
+            data = dict(data)
+            data["default_billing_mode"] = data.pop("billing_mode")
+        return data
 
 
 class AllowanceResult(BaseModel):

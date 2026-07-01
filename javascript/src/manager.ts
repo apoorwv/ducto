@@ -988,15 +988,27 @@ export class CreditManager {
     }
 
     const result = await this.store.deductTeam(teamId, userId, cost, metadata, idempotencyKey);
-    if (!result.error) {
-      this.emit("credits.deducted", userId, {
-        transactionId: result.transactionId,
-        amount: result.amount,
-        teamBalanceAfter: result.teamBalanceAfter,
+    // H2 fix: surface store errors — emit credits.deduct_failed and throw,
+    // mirroring Python manager.py:1069-1082. Previously returned a silent
+    // success-shaped object with an .error field, so failed charges looked OK.
+    if (result.error) {
+      this.emit("credits.deduct_failed", userId, {
+        error: result.error,
+        amount: cost,
         teamId,
         deductType: "team",
       });
+      throw new InsufficientCreditsError(
+        `Team deduction failed: ${result.error}. Team=${teamId}, user=${userId}, requested=${cost}`,
+      );
     }
+    this.emit("credits.deducted", userId, {
+      transactionId: result.transactionId,
+      amount: result.amount,
+      teamBalanceAfter: result.teamBalanceAfter,
+      teamId,
+      deductType: "team",
+    });
     return result;
   }
 

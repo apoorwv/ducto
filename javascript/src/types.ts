@@ -74,6 +74,15 @@ export interface PricingConfigResult {
   version: number;
 }
 
+/** Lightweight summary for pricing version listing (H8 parity with Python base.py). */
+export interface PricingConfigHistoryItem {
+  id: string;
+  version: number;
+  label: string | null;
+  active: boolean;
+  createdAt: string;
+}
+
 /** Report of SQL setup results. */
 export interface SetupResult {
   tablesCreated: string[];

@@ -248,7 +248,7 @@ describe("CreditManager", () => {
     it("fully covers cost with plan allowance, skipping balance deduct", async () => {
       const config: PricingConfigData = {
         models: { _default: "input_tokens * 1" },
-        plans: { free: { id: "plan-free", name: "Free", freeAllowance: new Decimal(100) } },
+        plans: { "plan-free": { id: "plan-free", name: "Free", freeAllowance: new Decimal(100) } },
       };
       await store.setActivePricing(config);
       await store.setUserPlan("user-1", "plan-free");
@@ -270,7 +270,7 @@ describe("CreditManager", () => {
     it("partially covers cost with plan allowance, deducts remainder from balance", async () => {
       const config: PricingConfigData = {
         models: { _default: "input_tokens * 1" },
-        plans: { starter: { id: "plan-starter", name: "Starter", freeAllowance: new Decimal(10) } },
+        plans: { "plan-starter": { id: "plan-starter", name: "Starter", freeAllowance: new Decimal(10) } },
       };
       await store.setActivePricing(config);
       await store.setUserPlan("user-1", "plan-starter");
@@ -612,24 +612,28 @@ describe("CreditManager", () => {
       );
     });
 
-    it("deductTeam insufficient balance returns error", async () => {
+    it("deductTeam insufficient balance throws InsufficientCreditsError", async () => {
+      // H2 fix: manager now throws on store error rather than returning a
+      // silent error object — mirrors Python manager.py:1069-1082.
       const mgr = new CreditManager(store);
       await mgr.publishPricingFromDict({ models: { _default: "input_tokens * 1" } });
 
       const team = await store.createTeam("Poor Team", new Decimal(10));
       await store.addTeamMember(team.teamId, "user-1", "member");
 
-      const result = await mgr.deductTeam(team.teamId, "user-1", { inputTokens: 100 });
-      expect(result.error).toBe("insufficient_team_balance");
+      await expect(mgr.deductTeam(team.teamId, "user-1", { inputTokens: 100 })).rejects.toThrow(
+        InsufficientCreditsError,
+      );
     });
 
-    it("deductTeam user not in team returns error", async () => {
+    it("deductTeam user not in team throws InsufficientCreditsError", async () => {
       const mgr = new CreditManager(store);
       await mgr.publishPricingFromDict({ models: { _default: "input_tokens * 1" } });
 
       const team = await store.createTeam("Closed Team", new Decimal(500));
-      const result = await mgr.deductTeam(team.teamId, "user-1", { inputTokens: 10 });
-      expect(result.error).toBe("user_not_in_team");
+      await expect(mgr.deductTeam(team.teamId, "user-1", { inputTokens: 10 })).rejects.toThrow(
+        InsufficientCreditsError,
+      );
     });
 
     it("team balance reflects deductions through manager", async () => {
