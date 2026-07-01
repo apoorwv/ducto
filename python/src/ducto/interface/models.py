@@ -64,6 +64,7 @@ class PricingConfigData(BaseModel):
     cache: dict[str, str] = Field(default_factory=dict)
     fixed: dict[str, int] = Field(default_factory=dict)
     min_balance: Decimal = Field(default=Decimal(5), ge=0)
+    signup_bonus: int = 50
     plans: dict[str, PlanDefinition] | None = None
 
 

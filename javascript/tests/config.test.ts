@@ -96,6 +96,27 @@ describe("loadConfigFromDict", () => {
     ).toThrow(ConfigError);
   });
 
+  it("defaults signupBonus to undefined (not set)", () => {
+    const config = loadConfigFromDict({ models: { a: "input_tokens * 1" } });
+    expect(config.signupBonus).toBeUndefined();
+  });
+
+  it("accepts a custom signupBonus value", () => {
+    const config = loadConfigFromDict({
+      models: { a: "input_tokens * 1" },
+      signupBonus: 200,
+    });
+    expect(config.signupBonus).toBe(200);
+  });
+
+  it("accepts signupBonus of 0 (no bonus)", () => {
+    const config = loadConfigFromDict({
+      models: { a: "input_tokens * 1" },
+      signupBonus: 0,
+    });
+    expect(config.signupBonus).toBe(0);
+  });
+
   it("accepts all canonical metric variables", () => {
     const expr =
       "input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + " +

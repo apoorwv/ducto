@@ -153,6 +153,28 @@ class TestConfigValidation:
             f"PricingConfigData has {data_fields - config_fields}"
         )
 
+    # ── SB1: signup_bonus default and validation ──────────────────────────
+
+    def test_signup_bonus_defaults_to_50(self) -> None:
+        """signup_bonus defaults to 50 (millicredits = $0.05)."""
+        config = load_config_from_dict({"models": {"_default": "input_tokens * 1"}})
+        assert config.signup_bonus == 50
+
+    def test_signup_bonus_custom_value(self) -> None:
+        """signup_bonus accepts a custom positive int."""
+        config = load_config_from_dict({"models": {"_default": "input_tokens * 1"}, "signup_bonus": 200})
+        assert config.signup_bonus == 200
+
+    def test_signup_bonus_negative_rejected(self) -> None:
+        """Negative signup_bonus raises ValidationError."""
+        with pytest.raises(ValidationError):
+            load_config_from_dict({"models": {"_default": "input_tokens * 1"}, "signup_bonus": -1})
+
+    def test_signup_bonus_zero_accepted(self) -> None:
+        """signup_bonus of 0 is valid (no signup bonus)."""
+        config = load_config_from_dict({"models": {"_default": "input_tokens * 1"}, "signup_bonus": 0})
+        assert config.signup_bonus == 0
+
     # ── CF1: Plan rate_overrides accepted ──────────────────────────────────
 
     def test_plan_rate_overrides_accepted(self) -> None:
@@ -290,30 +312,22 @@ class TestConfigValidation:
     def test_version_zero_rejected(self) -> None:
         """CF9a — version: 0 must be rejected (only Literal[1] is valid)."""
         with pytest.raises(ValidationError):
-            load_config_from_dict(
-                {"version": 0, "models": {"_default": "input_tokens * 1"}}
-            )
+            load_config_from_dict({"version": 0, "models": {"_default": "input_tokens * 1"}})
 
     def test_version_two_rejected(self) -> None:
         """CF9b — version: 2 must be rejected."""
         with pytest.raises(ValidationError):
-            load_config_from_dict(
-                {"version": 2, "models": {"_default": "input_tokens * 1"}}
-            )
+            load_config_from_dict({"version": 2, "models": {"_default": "input_tokens * 1"}})
 
     def test_version_string_one_rejected(self) -> None:
         """CF9c — version: '1' (string) must be rejected; Literal[1] is int-only."""
         with pytest.raises(ValidationError):
-            load_config_from_dict(
-                {"version": "1", "models": {"_default": "input_tokens * 1"}}
-            )
+            load_config_from_dict({"version": "1", "models": {"_default": "input_tokens * 1"}})
 
     def test_version_none_rejected(self) -> None:
         """CF9d — version: null must be rejected."""
         with pytest.raises(ValidationError):
-            load_config_from_dict(
-                {"version": None, "models": {"_default": "input_tokens * 1"}}
-            )
+            load_config_from_dict({"version": None, "models": {"_default": "input_tokens * 1"}})
 
     # ── CF10: Variable name collision with builtins ────────────────────────
 
@@ -337,9 +351,7 @@ class TestConfigValidation:
         namespace is isolated and cannot be shadowed by metric variables.
         """
         # This must load and evaluate cleanly.
-        config = load_config_from_dict(
-            {"models": {"_default": "ceil(input_tokens * 0.5)"}}
-        )
+        config = load_config_from_dict({"models": {"_default": "ceil(input_tokens * 0.5)"}})
         assert "ceil" in config.models["_default"]
 
         # Verify at evaluation time the builtin is used correctly.

@@ -28,6 +28,7 @@ export interface PricingConfigData {
   cache?: Record<string, string> | null;
   fixed?: Record<string, number> | null;
   minBalance?: number | null;
+  signupBonus?: number | null;
   plans?: Record<string, PlanDefinition> | null;
 }
 

@@ -28,6 +28,7 @@ class PricingConfig(BaseModel):
     cache: dict[str, str] = Field(default_factory=dict)
     # Money field: fractional credits, never float (contract §1).
     min_balance: Decimal = Field(default=Decimal(5), ge=0)
+    signup_bonus: int = Field(default=50, ge=0)
     fixed: dict[str, NonNegativeInt] = Field(default_factory=dict)
     plans: dict[str, PlanDefinition] | None = None
 

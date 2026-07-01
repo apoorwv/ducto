@@ -28,6 +28,7 @@ export interface PricingConfig {
   search: Record<string, string>;
   cache: Record<string, string>;
   minBalance: number;
+  signupBonus?: number | null;
   fixed: Record<string, number>;
   plans?: Record<string, PlanDefinition> | null;
 }
@@ -80,6 +81,7 @@ function normaliseKeys(data: Record<string, unknown>): Record<string, unknown> {
     default_billing_mode: "defaultBillingMode",
     per_operation: "perOperation",
     max_concurrent: "maxConcurrent",
+    signup_bonus: "signupBonus",
   };
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(data)) {
@@ -142,6 +144,7 @@ export function loadConfigFromDict(data: Record<string, unknown>): PricingConfig
     search: (d.search as Record<string, string>) ?? {},
     cache: (d.cache as Record<string, string>) ?? {},
     minBalance: (d.minBalance as number) ?? 5,
+    signupBonus: d.signupBonus as number | undefined,
     fixed: (d.fixed as Record<string, number>) ?? {},
   };
   if (config.minBalance < 0) throw new ConfigError("min_balance must be >= 0");
